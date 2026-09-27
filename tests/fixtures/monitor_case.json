@@ -1,0 +1,14 @@
+{
+  "repository": "oddballmeasure/cardinal_test_repo",
+  "baseline_sha": "65637e2a013d5bed9200c7d3ea6f70da3d6c2372",
+  "key": "stats-crash",
+  "endpoint": "/stats/tags",
+  "requests": 3,
+  "expected_frame": "api/app/routes/stats.py",
+  "acceptance": "tests/acceptance/test_notes_stats.py",
+  "requirement_ids": ["R1", "R2"],
+  "acceptance_tests": {
+    "R1": "test_tag_stats_with_no_notes_do_not_fail",
+    "R2": "test_tag_stats_summarise_stored_notes"
+  }
+}

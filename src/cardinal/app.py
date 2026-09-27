@@ -144,6 +144,9 @@ def settle(run: Run, values: dict, paused: bool) -> dict:
                                                              "data": {"status": status, "stage": failure.get("stage")}})
     if status == "done":
         issues.set_state(repo.slug, number, labels, labels.done)
+        pr = values.get("pr") or {}
+        issues.comment(repo.slug, number, f"Cardinal resolved this in {pr.get('url', 'its pull request')}"
+                       f" (merge `{(values.get('merge_sha') or '')[:12]}`).")
         remove_worktree(run.clone, run.worktree)
     elif status == "awaiting_human":
         issues.set_state(repo.slug, number, labels, labels.needs_human)

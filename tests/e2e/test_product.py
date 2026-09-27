@@ -63,7 +63,7 @@ def test_monitor_files_triaged_issues_from_cardinal_crashes_and_app_records():
     monitor files each defect on its own repository, caps a pass, never duplicates an open
     finding, re-files a recurrence, and every JSONL line matches the published schema."""
     report = harness("offline", "--scenario", "monitor", timeout=900)
-    assert len(report["checks"]) == 14
+    assert len(report["checks"]) == 15
 
 
 @pytest.mark.skipif(os.environ.get("CARDINAL_LIVE") != "1", reason="set CARDINAL_LIVE=1: uses GitHub, Actions and a paid model")

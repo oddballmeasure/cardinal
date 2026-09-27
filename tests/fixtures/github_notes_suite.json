@@ -1,6 +1,6 @@
 {
   "repository": "oddballmeasure/cardinal_test_repo",
-  "baseline_sha": "7a2e92af59546ad07a1641b070fa01cb50a905fb",
+  "baseline_sha": "65637e2a013d5bed9200c7d3ea6f70da3d6c2372",
   "ready_label": "cardinal:ready",
   "cases": [
     {

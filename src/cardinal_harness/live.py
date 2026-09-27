@@ -117,19 +117,23 @@ def grade_case(product: Product, case: dict, url: str, repository: str, temp: Pa
             "checks": checks, "passed": all(item["ok"] for item in checks.values())}
 
 
-def run_suite(suite_path: Path, model: str, artifact: Path, only: list[str] | None) -> dict:
+def exclusive(run, *args) -> dict:
     """Only one live suite may touch the shared test repository at a time."""
     lock = (ROOT / "artifacts" / "live.lock").open("w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        return {"suite": str(suite_path), "passed": False, "cases": [],
+        return {"passed": False, "cases": [],
                 "error": "Another live suite holds artifacts/live.lock; it would share the test repository"}
     try:
-        return run_locked(suite_path, model, artifact, only)
+        return run(*args)
     finally:
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
+
+
+def run_suite(suite_path: Path, model: str, artifact: Path, only: list[str] | None) -> dict:
+    return exclusive(run_locked, suite_path, model, artifact, only)
 
 
 def run_locked(suite_path: Path, model: str, artifact: Path, only: list[str] | None) -> dict:

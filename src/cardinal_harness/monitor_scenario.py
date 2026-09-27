@@ -20,7 +20,7 @@ import jsonschema
 
 from cardinal_harness import fake_gh
 from cardinal_harness.offline import SLUG, expect, git, world
-from cardinal_harness.product import Product, json_file, product_env, write_config
+from cardinal_harness.product import ROOT, Product, json_file, product_env, write_config
 
 SELF = "example/cardinal"
 TOKEN = "offline-ingest-token"
@@ -161,6 +161,15 @@ def scenario(temp: Path, artifact: Path) -> dict:
             invalid.append(exc.message)
     expect(checks, "every JSONL line matches the published schema", code == 0 and lines and not invalid,
            {"lines": len(lines), "invalid": invalid[:5]})
+    example = json.loads((ROOT / "examples" / "log-record.json").read_text())
+    examples_home = temp / "examples-home"
+    examples_home.mkdir()
+    (examples_home / "cardinal.toml").write_text((ROOT / "examples" / "cardinal.toml").read_text())
+    loaded = subprocess.run([sys.executable, "-m", "cardinal.cli.main", "--home", str(examples_home), "status"],
+                            env=product.env, text=True, capture_output=True, check=False, timeout=60)
+    expect(checks, "the example config loads and the example record matches the schema",
+           loaded.returncode == 0 and not list(jsonschema.Draft202012Validator(schema).iter_errors(example)),
+           loaded.stderr[-1000:])
     triage = [line for line in lines if line["event"] == "issue_triaged"]
     expect(checks, "triage records carry their run and stage",
            triage and all(line["context"].get("run_id") and line["context"].get("stage") == "triage" for line in triage),

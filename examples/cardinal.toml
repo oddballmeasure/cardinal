@@ -1,0 +1,64 @@
+# Example Cardinal configuration. Copy to $CARDINAL_HOME/cardinal.toml (default ~/.cardinal) and edit.
+# Unknown keys are refused, and every repository decision must be written out: nothing defaults open.
+# Check it with `cardinal repos check --repo <owner/name>`.
+
+# One model per role, as provider:model. Keys come from the environment (OPENAI_API_KEY, ANTHROPIC_API_KEY).
+[models]
+orchestrator = "openai:gpt-6-sol"   # intake, planning, and triage of monitor-filed issues
+profiler = "openai:gpt-6-sol"       # summarises the repository once, then incrementally
+coder = "openai:gpt-6-sol"
+verifier = "openai:gpt-6-sol"
+pr_manager = "openai:gpt-6-sol"
+deployer = "openai:gpt-6-sol"
+monitor = "openai:gpt-6-sol"        # writes issue text for grouped errors; code decides what is filed
+
+# Every Cardinal process writes LogRecords to $CARDINAL_HOME/logs/YYYY-MM-DD.jsonl and store.db.
+[logging]
+level = "info"                            # debug | info | warning | error | critical
+source_repo = "oddballmeasure/cardinal"   # Cardinal's own defects are filed here; list it under [[repos]] to fix them
+
+# `cardinal ingest`: running apps POST LogRecords (see `cardinal logs schema`) to http://<bind>/v1/records.
+# Omit the section to disable. Docker containers reach a host bound to 127.0.0.1 through
+# http://host.docker.internal:<port> on Docker Desktop.
+[ingest]
+bind = "127.0.0.1:8787"
+token_env = "CARDINAL_INGEST_TOKEN"   # the name of the variable holding the bearer token, not the token
+
+# `cardinal monitor`: files an issue on the reporting repository, then the orchestrator triages it
+# to cardinal:ready (it can write the fix) or cardinal:investigate. Omit the section to disable.
+[monitor]
+min_occurrences = 3        # error records one fingerprint needs within the window; a crash needs one
+window_hours = 24
+max_issues_per_pass = 3    # stops an error storm from filing a flood of issues
+
+# Optional; these are the defaults.
+[limits]
+recursion_limit = 250
+coder_attempts = 3
+verify_rounds = 2
+test_timeout_seconds = 1500
+ci_timeout_seconds = 2400
+ci_poll_seconds = 15
+model_timeout_seconds = 300
+
+# The live test repository: a Docker Compose notes app whose API reports errors to ingest.
+[[repos]]
+slug = "oddballmeasure/cardinal_test_repo"
+base_branch = "main"
+test_command = ["python", "-m", "pytest", "-q", "tests"]   # the only test oracle Cardinal uses
+required_checks = ["http-e2e"]                             # [] means merge without waiting for CI
+paths_off_limits = [".github/"]
+# retry_after_hours = 24   # requeue retryable failures after this long; omit to never retry
+
+# Deploy after merge with the repository's committed deploy/deploy.sh and deploy/deploy.json.
+[repos.deploy]
+transport = "local"                  # local | ssh (ssh reads host and user from deploy.json)
+local_directory = "~/cardinal-deploys/notes"
+
+# Cardinal working on itself. Uncomment once you are ready for Cardinal to fix its own issues.
+# [[repos]]
+# slug = "oddballmeasure/cardinal"
+# base_branch = "main"
+# test_command = ["uv", "run", "--locked", "python", "-m", "pytest", "-q"]
+# required_checks = []
+# paths_off_limits = [".github/", "tests/acceptance/", "src/cardinal_harness/"]

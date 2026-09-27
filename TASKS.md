@@ -51,7 +51,9 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [x] `cardinal monitor`: fingerprint groups, thresholds, per-pass cap, findings dedup, recurrence, orchestrator triage to ready/investigate
 - [x] Check: `offline --scenario monitor` passes 14/14; full offline suite 6 passed
 - [ ] Live: monitor drafting and triage with a real model (not run yet)
-- [ ] Instrument `cardinal_test_repo`'s app to send records to ingest (needs Monty's approval)
+- [x] Instrument `cardinal_test_repo`'s app to send records to ingest: `api/app/reporting.py`, baseline 65637e2
+- [x] Example configs in `examples/` (cardinal.toml, app.env, log-record.json), checked by the offline monitor scenario
+- [x] Live propagation (`python -m cardinal_harness propagate`): run 69ff64f9 passed 13/13, issue #29 → PR #30 merged, cleanup clean
 - [ ] Add `oddballmeasure/cardinal` under `[[repos]]` so Cardinal's own findings can be triaged and fixed
 - [ ] Investigation agent for `cardinal:investigate`; log retention
 

@@ -2,6 +2,7 @@
 
   offline --scenario NAME              single | daemon | ci-failure | deploy | cleaner | monitor, all without network
   live --suite PATH --model SPEC       the product's daemon against the live GitHub test repository
+  propagate --model SPEC              an app error in the live test repo becomes an issue Cardinal fixes
   clean --manifest PATH [--model SPEC] restore the live test repository from a pinned manifest
 Every command writes artifacts/e2e/<run-id>/report.json with a rerun command, and exits nonzero
 unless every check passed.
@@ -28,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--suite", type=Path, default=ROOT / "tests" / "fixtures" / "github_notes_suite.json")
     live.add_argument("--model", required=True)
     live.add_argument("--only", nargs="*", help="case keys to run, in suite order")
+    propagate = sub.add_parser("propagate")
+    propagate.add_argument("--model", required=True)
     clean = sub.add_parser("clean")
     clean.add_argument("--manifest", type=Path, required=True)
     clean.add_argument("--model", required=True)
@@ -44,6 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "live":
         from cardinal_harness import live as suite
         report = suite.run_suite(args.suite, args.model, artifact, args.only)
+    elif args.command == "propagate":
+        from cardinal_harness import live_monitor
+        report = live_monitor.run_exclusive(args.model, artifact)
     else:
         from cardinal_harness import live as suite
         report = suite.clean_from_manifest(args.manifest, args.model, artifact)

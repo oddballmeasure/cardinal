@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "level": "error",
+  "event": "request_failed",
+  "message": "GET /stats/tags raised ZeroDivisionError",
+  "source": {
+    "repo": "oddballmeasure/cardinal_test_repo",
+    "component": "api",
+    "revision": null,
+    "host": "notes-api-1",
+    "pid": 1
+  },
+  "error": {
+    "type": "ZeroDivisionError",
+    "message": "division by zero",
+    "stack": [{"file": "api/app/routes/stats.py", "function": "tag_stats", "line": 14}],
+    "traceback": "Traceback (most recent call last):\n  File \"api/app/routes/stats.py\", line 14, in tag_stats\nZeroDivisionError: division by zero\n"
+  },
+  "data": {"method": "GET", "path": "/stats/tags"}
+}
