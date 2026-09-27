@@ -4,7 +4,14 @@ from cardinal.config.models import Labels
 from cardinal.contracts.issue import Issue
 from cardinal.github.gh import gh, gh_json
 
-LABEL_COLORS = {"ready": "0e8a16", "working": "fbca04", "done": "5319e7", "error": "b60205", "needs_human": "d93f0b"}
+# Colors match oddballmeasure/cardinal_test_repo so every repository shows the same state axis.
+LABEL_STYLES = {
+    "ready": ("0e8a16", "Ready for Cardinal"),
+    "working": ("fbca04", "Cardinal is working this issue"),
+    "done": ("5319e7", "Cardinal verified and merged"),
+    "error": ("b60205", "Cardinal failed; see the issue comments"),
+    "needs_human": ("d93f0b", "Cardinal needs a human decision"),
+}
 
 
 def view(repo: str, number: int) -> tuple[Issue, list[str], str]:
@@ -40,8 +47,8 @@ def set_state(repo: str, number: int, labels: Labels, target: str) -> None:
 
 
 def ensure_labels(repo: str, labels: Labels) -> None:
-    for key, color in LABEL_COLORS.items():
-        gh("label", "create", getattr(labels, key), "-R", repo, "--color", color, "--force")
+    for key, (color, description) in LABEL_STYLES.items():
+        gh("label", "create", getattr(labels, key), "-R", repo, "--color", color, "--description", description, "--force")
 
 
 def comment(repo: str, number: int, body: str) -> None:
