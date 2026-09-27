@@ -16,23 +16,102 @@ The repository holds two packages:
 The product never imports the harness or reads its acceptance tests
 (`lessons/product-never-sees-the-oracle.md`).
 
-## Using the product
+## Install
+
+Cardinal needs:
+
+| Tool | Why |
+|---|---|
+| Python 3.13+ and [uv](https://docs.astral.sh/uv/) | Cardinal and its lockfile |
+| `git` | Clones, worktrees and pushes |
+| [`gh`](https://cli.github.com/), logged in with `gh auth login` | Issues, labels, PRs and checks. Git pushes use `gh`'s credential, so that account needs push, pull-request and label rights on every target repository |
+| A model API key | `OPENAI_API_KEY` for `openai:` models, `ANTHROPIC_API_KEY` for `anthropic:` models |
+| Whatever the target's `test_command` needs | Cardinal runs that command in each worktree; for example, the live test repository needs Docker |
 
 ```sh
-uv sync --locked --extra openai
-export OPENAI_API_KEY=...                  # the product reads keys from the environment only
-uv run cardinal init --repo owner/name     # writes ~/.cardinal/cardinal.toml; edit it
-uv run cardinal repos check                # gh auth, remote, base branch, labels, test command, keys
+git clone https://github.com/oddballmeasure/cardinal.git && cd cardinal
+uv sync --locked --extra openai            # Anthropic support is already included
+export OPENAI_API_KEY=...                  # read from the process environment only, never from a file
+uv run cardinal init --repo owner/name     # writes ~/.cardinal/cardinal.toml
+$EDITOR ~/.cardinal/cardinal.toml          # see Configuration below
+uv run cardinal repos check                # each probe must print ok before the first run
+```
+
+`repos check` probes `gh` authentication, the remote, the base branch, the label set (creating
+missing labels), that `test_command` is on `PATH`, and a key for every role's model.
+
+If a target's Docker builds hang with `DeadlineExceeded` on a `FROM` line, the Docker Desktop
+credential helper has stopped answering; see `lessons/docker-credential-helper-hang.md`.
+
+## Configuration
+
+Cardinal keeps everything under one home directory: `--home`, else `$CARDINAL_HOME`, else
+`~/.cardinal`. It holds `cardinal.toml`, `store.db` (what happened), `checkpoints.db` (what a paused
+run does next), `logs/`, shared clones, per-issue worktrees and run context.
+
+`cardinal.toml` refuses unknown keys, and repository decisions have no defaults, so a missing
+setting fails loudly instead of running with a guess. `examples/cardinal.toml` is a complete,
+commented example.
+
+| Section | Keys | Notes |
+|---|---|---|
+| `[models]` | `orchestrator`, `profiler`, `coder`, `verifier`, `pr_manager`, `deployer`, `monitor` | Required, each `provider:model` (e.g. `openai:gpt-6-sol`). No role borrows another's |
+| `[logging]` | `level`, `source_repo` | Required. `source_repo` is where Cardinal files its own defects |
+| `[[repos]]` | `slug`, `base_branch`, `test_command`, `required_checks`, `paths_off_limits` | Required, one table per repository. `test_command` is an argv list (no shell) and is the only test oracle. `required_checks = []` merges without waiting for CI |
+| | `remote_url`, `branch_prefix`, `retry_after_hours` | Optional. Defaults: `https://github.com/<slug>`, `cardinal`, and no automatic retry (at least 24 when set) |
+| `[repos.labels]` | `ready`, `working`, `done`, `error`, `needs_human`, `investigate` | Optional renames of the `cardinal:*` labels |
+| `[repos.deploy]` | `transport`, `local_directory` | Optional. `local` or `ssh`; see Deployment |
+| `[limits]` | `recursion_limit`, `coder_attempts`, `verify_rounds`, `test_timeout_seconds`, `ci_timeout_seconds`, `ci_poll_seconds`, `model_timeout_seconds` | Optional; defaults are in `examples/cardinal.toml` |
+| `[ingest]` | `bind`, `token_env` | Optional; enables `cardinal ingest` |
+| `[monitor]` | `min_occurrences`, `window_hours`, `max_issues_per_pass` | Optional; enables `cardinal monitor` |
+
+Environment variables:
+
+| Variable | Used for |
+|---|---|
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | Model keys, per the provider in each role's spec |
+| `CARDINAL_HOME` | Home directory, when `--home` is not given |
+| The variable named by `[ingest] token_env` | Bearer token that apps must send to `cardinal ingest`; the endpoint refuses to start without it |
+| `CARDINAL_MODEL_PROVIDER`, `CARDINAL_DEPLOY_HOST` | Test hooks only: the grader substitutes scripted models and a mock deploy host through these. Leave unset |
+
+### Deployment
+
+With `[repos.deploy]` set, Cardinal deploys each merge using files committed in the target
+repository, read from the merged commit: `deploy.sh` and `deploy.json`, both at the root or
+both in `deploy/`. `deploy.json` names `host`, `user`, optional `port` (22),
+`working_directory`, `deploy_timeout_seconds`, and a `health` block with `command`,
+`expected_stdout`, `timeout_seconds` and `interval_seconds`. The `ssh` transport connects to that
+host and user non-interactively, so the host needs key-based login and an entry in `known_hosts`;
+`local` runs the script in `local_directory` on this machine.
+
+### Error reporting: ingest and monitor
+
+A running app can send its errors to Cardinal, which files issues for repeated ones:
+
+```sh
+export CARDINAL_INGEST_TOKEN=...     # the variable named by [ingest] token_env
+uv run cardinal ingest               # serves POST http://<bind>/v1/records
+uv run cardinal monitor              # groups errors; files at most max_issues_per_pass issues a pass
+uv run cardinal logs schema          # the LogRecord JSON Schema apps write against
+```
+
+The app sends `Authorization: Bearer <token>`, and each record's `source.repo` must be a
+configured `[[repos]]` slug, or it is rejected. `examples/app.env` shows an app's settings and
+`examples/log-record.json` a sample record. Apps in Docker reach an ingest bound to `127.0.0.1`
+at `http://host.docker.internal:<port>` on Docker Desktop. The orchestrator triages each filed
+issue to `cardinal:ready` (it can write the fix) or `cardinal:investigate`.
+
+## Running
+
+```sh
 uv run cardinal run 42                     # one issue, in the foreground
 uv run cardinal daemon --once              # every issue labelled cardinal:ready, in number order
+uv run cardinal daemon                     # keep polling (every --interval seconds, default 60)
 uv run cardinal status 42 --json           # runs, events, agent calls and token use
 uv run cardinal resume 42 --approve --note "..."   # answer a run waiting for a person (or --reject)
 ```
 
-`$CARDINAL_HOME` (default `~/.cardinal`) holds `cardinal.toml`, `store.db` (what happened),
-`checkpoints.db` (what a paused run does next), shared clones, per-issue worktrees and run
-context. Every repository decision in the config is explicit: `test_command`,
-`required_checks` and `paths_off_limits` have no defaults, and unknown keys are refused.
+With more than one `[[repos]]` entry, pass `--repo owner/name`.
 
 ### How a run flows
 
@@ -47,7 +126,7 @@ profile → intake ─┬─ needs a person → pause (cardinal resume) → inta
 - **Implement.** Each ticket gets up to `coder_attempts` attempts, each judged by the repository's `test_command`. An accepted ticket is a commit carrying a `Cardinal-Ticket:` trailer, so a restarted run skips work already committed.
 - **Verify.** The verifier's assessment is checked against facts the runtime gathers itself: tests at the head commit, test files changed, and off-limits paths untouched. A rejection sends the verifier's findings back as a repair ticket, up to `verify_rounds` times.
 - **PR.** The branch is pushed with a lease. The PR merges only after every `required_checks` check passes on the verified head.
-- **Labels.** Labels form one state axis: `cardinal:ready`, `in-progress`, `done`, `error` and `needs-human`. A failure records a typed `FailureKind`. Retryable failures are re-queued after `retry_after_hours` (at least 24) only when that setting is present.
+- **Labels.** Labels form one state axis: `cardinal:ready`, `in-progress`, `done`, `error`, `needs-human` and `investigate`. A failure records a typed `FailureKind`. Retryable failures are re-queued after `retry_after_hours` (at least 24) only when that setting is present.
 
 Agents have no shell. The worktree is the only writable mount. Within it, `.git`, vendor
 directories and `paths_off_limits` refuse writes, and the skills and run context are
