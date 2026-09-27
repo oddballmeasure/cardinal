@@ -1,5 +1,6 @@
 """The repository's own test command: the only test oracle Cardinal's agents or runtime use."""
 
+import logging
 import os
 import signal
 import subprocess
@@ -8,6 +9,7 @@ from pathlib import Path
 from cardinal.contracts.evidence import CommandEvidence
 
 TAIL = 6000
+log = logging.getLogger(__name__)
 
 
 def tail(text: str) -> str:
@@ -26,6 +28,8 @@ def run_repo_tests(worktree: Path, command: list[str], timeout: int) -> CommandE
         if not isinstance(exc, subprocess.TimeoutExpired):  # Cardinal is stopping: take the suite with it
             os.killpg(process.pid, signal.SIGKILL)
             raise
+        log.warning("test command timed out after %ss", timeout,
+                    extra={"event": "test_timeout", "data": {"command": command}})
         os.killpg(process.pid, signal.SIGTERM)
         try:
             stdout, stderr = process.communicate(timeout=30)

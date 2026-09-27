@@ -7,7 +7,8 @@ Branch heads are read from the bare remote on every call, as GitHub would report
 
 State lives in the JSON file named by CARDINAL_FAKE_GH_STATE:
   repository, bare, issues{number: {...}}, labels[], prs[], next_pr,
-  ci{"script": ["pending", "success"], "check": "name"}, check_calls{sha: n}
+  ci{"script": ["pending", "success"], "check": "name"}, check_calls{sha: n},
+  other_repos{slug: {issues, labels}}: further repositories that hold only issues and labels
 """
 
 import json
@@ -69,6 +70,12 @@ def issues(state: dict, args: list[str]):
                 if name not in issue["labels"]:
                     issue["labels"].append(name)
         return None
+    if verb == "create":
+        taken = [int(number) for number in state["issues"]] + [pr["number"] for pr in state.get("prs", [])]
+        number = max(taken, default=0) + 1
+        state["issues"][str(number)] = {"number": number, "title": option(args, "--title"), "body": option(args, "--body"),
+                                        "state": "OPEN", "labels": [], "comments": []}
+        return f"https://github.invalid/{state['_slug']}/issues/{number}"
     if verb == "comment":
         state["issues"][args[1]]["comments"].append(option(args, "--body"))
         return None
@@ -139,11 +146,19 @@ def main() -> None:
     path = Path(os.environ["CARDINAL_FAKE_GH_STATE"])
     state = json.loads(path.read_text())
     args = sys.argv[1:]
+    scope = state
     if "-R" in args:
         index = args.index("-R")
-        if args[index + 1] != state["repository"]:
-            raise SystemExit(f"GraphQL: Could not resolve to a Repository with the name '{args[index + 1]}'.")
+        slug = args[index + 1]
+        if slug != state["repository"]:
+            if slug not in state.get("other_repos", {}):
+                raise SystemExit(f"GraphQL: Could not resolve to a Repository with the name '{slug}'.")
+            scope = state["other_repos"][slug]
         args = args[:index] + args[index + 2:]
+    elif args[:2] == ["issue", "create"]:
+        raise SystemExit("gh issue create needs -R outside a checkout")
+    scope["_slug"] = state["repository"] if scope is state else next(
+        key for key, value in state["other_repos"].items() if value is scope)
     log = state.setdefault("calls", [])
     log.append(sys.argv[1:])
     if args[:2] == ["auth", "status"]:
@@ -151,17 +166,18 @@ def main() -> None:
     elif args[:2] == ["repo", "view"]:
         result = {"nameWithOwner": args[2]}
     elif args[:2] == ["label", "create"]:
-        if args[2] not in state["labels"]:
-            state["labels"].append(args[2])
+        if args[2] not in scope["labels"]:
+            scope["labels"].append(args[2])
         result = None
     elif args[0] == "issue":
-        result = issues(state, args[1:])
+        result = issues(scope, args[1:])
     elif args[0] == "pr":
         result = pulls(state, args[1:])
     elif args[0] == "api":
         result = api(state, args[1:])
     else:
         raise SystemExit(f"fake gh: unsupported command {args}")
+    scope.pop("_slug")
     path.write_text(json.dumps(state, indent=2))
     if result is not None:
         print(json.dumps(result) if isinstance(result, (dict, list)) else result)

@@ -36,7 +36,7 @@ issues it finds on its own.
 ## Commands
 
     uv run --locked python -m pytest -q                                   # offline E2E, ~90s
-    uv run --locked python -m cardinal_harness offline --scenario NAME    # single|daemon|ci-failure|deploy|cleaner
+    uv run --locked python -m cardinal_harness offline --scenario NAME    # single|daemon|ci-failure|deploy|cleaner|monitor
     uv run --locked --extra openai --extra e2e python -m cardinal_harness live --model openai:gpt-6-sol
 
 Live runs are pre-approved. They use GitHub Actions, Docker and a paid model, and take about an

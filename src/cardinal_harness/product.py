@@ -29,9 +29,13 @@ def toml_list(items: list[str]) -> str:
 
 def write_config(home: Path, *, models: dict[str, str], slug: str, remote_url: str, test_command: list[str],
                  required_checks: list[str], paths_off_limits: list[str], deploy: str | None,
-                 limits: dict[str, int] | None = None) -> Path:
+                 limits: dict[str, int] | None = None, source_repo: str = "oddballmeasure/cardinal",
+                 sections: dict[str, dict] | None = None, extra_repos: list[str] | None = None) -> Path:
     home.mkdir(parents=True, exist_ok=True)
-    lines = ["[models]", *(f"{role} = {json.dumps(spec)}" for role, spec in models.items()), ""]
+    lines = ["[models]", *(f"{role} = {json.dumps(spec)}" for role, spec in models.items()), "",
+             "[logging]", 'level = "info"', f"source_repo = {json.dumps(source_repo)}", ""]
+    for name, values in (sections or {}).items():
+        lines += [f"[{name}]", *(f"{key} = {json.dumps(value)}" for key, value in values.items()), ""]
     if limits:
         lines += ["[limits]", *(f"{key} = {value}" for key, value in limits.items()), ""]
     lines += ["[[repos]]", f"slug = {json.dumps(slug)}", f"remote_url = {json.dumps(remote_url)}",
@@ -39,6 +43,7 @@ def write_config(home: Path, *, models: dict[str, str], slug: str, remote_url: s
               f"required_checks = {toml_list(required_checks)}", f"paths_off_limits = {toml_list(paths_off_limits)}"]
     if deploy:
         lines += ["", "[repos.deploy]", f"transport = {json.dumps(deploy)}", 'local_directory = "deploy-host"']
+    lines += extra_repos or []
     path = home / "cardinal.toml"
     path.write_text("\n".join(lines) + "\n")
     return path

@@ -1,6 +1,6 @@
 """`python -m cardinal_harness`: grade the Cardinal product from outside.
 
-  offline --scenario NAME              single | daemon | ci-failure | deploy | cleaner, all without network
+  offline --scenario NAME              single | daemon | ci-failure | deploy | cleaner | monitor, all without network
   live --suite PATH --model SPEC       the product's daemon against the live GitHub test repository
   clean --manifest PATH [--model SPEC] restore the live test repository from a pinned manifest
 Every command writes artifacts/e2e/<run-id>/report.json with a rerun command, and exits nonzero
@@ -23,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cardinal_harness")
     sub = parser.add_subparsers(dest="command", required=True)
     offline = sub.add_parser("offline")
-    offline.add_argument("--scenario", choices=["single", "daemon", "ci-failure", "deploy", "cleaner"], required=True)
+    offline.add_argument("--scenario", choices=["single", "daemon", "ci-failure", "deploy", "cleaner", "monitor"], required=True)
     live = sub.add_parser("live")
     live.add_argument("--suite", type=Path, default=ROOT / "tests" / "fixtures" / "github_notes_suite.json")
     live.add_argument("--model", required=True)

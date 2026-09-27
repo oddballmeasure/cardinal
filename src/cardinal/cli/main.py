@@ -45,6 +45,16 @@ def parser() -> argparse.ArgumentParser:
     daemon.add_argument("--repo")
     daemon.add_argument("--once", action="store_true", help="Drain the ready queue, then exit")
     daemon.add_argument("--interval", type=int, default=60)
+
+    logs = sub.add_parser("logs", help="Log record contract")
+    logs_sub = logs.add_subparsers(dest="logs_command", required=True)
+    logs_sub.add_parser("schema", help="Print the LogRecord JSON Schema other repositories write against")
+
+    sub.add_parser("ingest", help="Accept LogRecords from running apps over HTTP")
+
+    watch = sub.add_parser("monitor", help="File issues for repeated errors in the logs")
+    watch.add_argument("--once", action="store_true", help="Scan once, then exit")
+    watch.add_argument("--interval", type=int, default=300)
     return root
 
 

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS runs (
     thread_id TEXT NOT NULL UNIQUE,
     repo TEXT NOT NULL,
     issue INTEGER NOT NULL,
-    status TEXT NOT NULL,             -- running | awaiting_human | done | rejected | failed
+    status TEXT NOT NULL,             -- running | awaiting_human | done | rejected | failed | triaged
     failure_kind TEXT,
     failure_detail TEXT,
     branch TEXT,
@@ -64,4 +64,39 @@ CREATE TABLE IF NOT EXISTS claims (
     run_id TEXT NOT NULL,
     claimed_at TEXT NOT NULL,
     PRIMARY KEY (repo, issue)
+);
+
+-- Every LogRecord Cardinal wrote or received, mirrored from the JSONL files under logs/.
+-- Written through the swallowing log sink: a lost row loses a record, never a run.
+CREATE TABLE IF NOT EXISTS logs (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    at TEXT NOT NULL,
+    level TEXT NOT NULL,
+    repo TEXT NOT NULL,
+    component TEXT NOT NULL,
+    event TEXT NOT NULL,
+    failure_kind TEXT,
+    fingerprint TEXT NOT NULL,
+    run_id TEXT,
+    record TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS logs_by_fingerprint ON logs (fingerprint, at);
+CREATE INDEX IF NOT EXISTS logs_by_at ON logs (at);
+
+-- INPUT. How far the monitor has read the logs table.
+CREATE TABLE IF NOT EXISTS monitor_cursor (
+    name TEXT PRIMARY KEY,
+    seq INTEGER NOT NULL
+);
+
+-- INPUT. One row per defect the monitor has filed; stops a second issue for the same fingerprint.
+CREATE TABLE IF NOT EXISTS findings (
+    fingerprint TEXT PRIMARY KEY,
+    repo TEXT NOT NULL,
+    issue INTEGER NOT NULL,
+    occurrences INTEGER NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    filed_at TEXT NOT NULL
 );

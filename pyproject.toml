@@ -31,3 +31,8 @@ cardinal = ["skills/**/*.md", "skills/*.md", "store/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/e2e"]
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.23,<5",
+]

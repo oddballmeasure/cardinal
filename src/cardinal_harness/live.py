@@ -32,7 +32,7 @@ from cardinal_harness.github_setup import (discover_cases, load_model_key, prepa
 from cardinal_harness.product import FIXTURES, ROOT, Product, json_file, product_env, write_config
 
 CHECK = "http-e2e"
-ROLES = ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer")
+ROLES = ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor")
 
 
 def gh_json(*args: str):

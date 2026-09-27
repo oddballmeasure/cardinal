@@ -39,7 +39,8 @@ def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection) -> lis
     issues.ensure_labels(repo.slug, repo.labels)
     requeued = retry_sweep(repo, db)
     if requeued:
-        log.info("requeued %s after their retry window", requeued)
+        log.info("requeued %s after their retry window", requeued, extra={"event": "retry_requeued",
+                                                                           "data": {"issues": requeued}})
     results: list[dict] = []
     attempted: set[int] = set()
     while True:
@@ -52,12 +53,15 @@ def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection) -> lis
         try:
             results.append(app.start(home, config, repo, db, number))
         except ValueError as exc:  # already claimed or closed: not ours to run this time
-            log.warning("skipped issue #%s: %s", number, exc)
+            log.warning("skipped issue #%s: %s", number, exc, extra={"event": "issue_skipped", "data": {"issue": number}})
             results.append({"issue": number, "status": "skipped", "reason": str(exc)})
 
 
 def serve(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, interval: int) -> None:
     while True:
-        for result in drain(home, config, repo, db):
-            log.info("issue #%s settled %s", result["issue"], result["status"])
+        try:
+            for result in drain(home, config, repo, db):
+                log.info("issue #%s settled %s", result["issue"], result["status"])
+        except Exception:  # noqa: BLE001 - one failed poll (GitHub down, store locked) must not end the daemon
+            log.exception("daemon poll failed; retrying in %ss", interval, extra={"event": "daemon_poll_failed"})
         time.sleep(interval)

@@ -58,6 +58,14 @@ def test_cleaner_restores_remote_and_refuses_a_stale_head():
     harness("offline", "--scenario", "cleaner", timeout=600)
 
 
+def test_monitor_files_triaged_issues_from_cardinal_crashes_and_app_records():
+    """A crash with unwritable log files still settles; app records arrive through ingest; the
+    monitor files each defect on its own repository, caps a pass, never duplicates an open
+    finding, re-files a recurrence, and every JSONL line matches the published schema."""
+    report = harness("offline", "--scenario", "monitor", timeout=900)
+    assert len(report["checks"]) == 14
+
+
 @pytest.mark.skipif(os.environ.get("CARDINAL_LIVE") != "1", reason="set CARDINAL_LIVE=1: uses GitHub, Actions and a paid model")
 def test_live_github_suite_through_the_daemon():
     model = os.environ.get("CARDINAL_LIVE_MODEL", "openai:gpt-6-sol")

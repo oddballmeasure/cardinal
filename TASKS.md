@@ -44,6 +44,17 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 ## Phase 7 — E2E tests
 - [x] `tests/e2e/test_product.py` drives only the harness CLI: single, daemon, ci-failure, deploy, cleaner (+ live, opt-in)
 
+## Phase 8 — logging, ingest, monitor (plan: ~/.claude/plans/now-is-the-time-drifting-floyd.md)
+- [x] `LogRecord` v1 schema (`cardinal logs schema`), JSONL + SQLite sink that never raises, stdlib handler, run/stage context
+- [x] Every catch site logs with its traceback: nodes, drive/settle, agent calls, daemon, probes, test timeouts, triage, monitor
+- [x] `cardinal ingest`: token, per-record validation, configured repos only
+- [x] `cardinal monitor`: fingerprint groups, thresholds, per-pass cap, findings dedup, recurrence, orchestrator triage to ready/investigate
+- [x] Check: `offline --scenario monitor` passes 14/14; full offline suite 6 passed
+- [ ] Live: monitor drafting and triage with a real model (not run yet)
+- [ ] Instrument `cardinal_test_repo`'s app to send records to ingest (needs Monty's approval)
+- [ ] Add `oddballmeasure/cardinal` under `[[repos]]` so Cardinal's own findings can be triaged and fixed
+- [ ] Investigation agent for `cardinal:investigate`; log retention
+
 ## Discovered along the way
 - [x] Killed daemon left its test process group (and hung docker helpers) running: run_repo_tests now kills its group on any interruption; SIGTERM unwinds and settles the run as interrupted
 - [x] Live grader crashed querying checks for an unpushed commit, and ran Docker acceptance for runs that never merged: both fixed

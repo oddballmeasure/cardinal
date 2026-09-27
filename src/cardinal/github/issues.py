@@ -11,6 +11,7 @@ LABEL_STYLES = {
     "done": ("5319e7", "Cardinal verified and merged"),
     "error": ("b60205", "Cardinal failed; see the issue comments"),
     "needs_human": ("d93f0b", "Cardinal needs a human decision"),
+    "investigate": ("c5def5", "Cardinal needs research before coding"),
 }
 
 
@@ -49,6 +50,11 @@ def set_state(repo: str, number: int, labels: Labels, target: str) -> None:
 def ensure_labels(repo: str, labels: Labels) -> None:
     for key, (color, description) in LABEL_STYLES.items():
         gh("label", "create", getattr(labels, key), "-R", repo, "--color", color, "--description", description, "--force")
+
+
+def create(repo: str, title: str, body: str) -> int:
+    url = gh("issue", "create", "-R", repo, "--title", title, "--body", body).strip().splitlines()[-1]
+    return int(url.rstrip("/").rsplit("/", 1)[1])
 
 
 def comment(repo: str, number: int, body: str) -> None:

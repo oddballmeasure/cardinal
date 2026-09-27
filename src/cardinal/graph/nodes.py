@@ -5,6 +5,7 @@ The live dependencies arrive as `run`, bound with functools.partial. Never name 
 """
 
 import functools
+import logging
 import subprocess
 import traceback
 
@@ -18,9 +19,12 @@ from cardinal.graph import runtime
 from cardinal.graph.context import Run
 from cardinal.graph.failures import FailureKind, StageFailure
 from cardinal.graph.state import RunState
+from cardinal.logs.context import bind
 from cardinal.repo.git import GitError, create_worktree, ensure_clone, publish
 from cardinal.roles import deployer, orchestrator, pr_manager, profiler, verifier
 from cardinal.store import inputs, runs
+
+log = logging.getLogger(__name__)
 
 
 def guarded(stage: str):
@@ -28,16 +32,22 @@ def guarded(stage: str):
     def decorate(node):
         @functools.wraps(node)
         def wrapper(state: RunState, run: Run) -> dict:
-            try:
-                return node(state, run)
-            except StageFailure as exc:
-                kind, detail = exc.kind, exc.detail
-            except (GitError, subprocess.CalledProcessError) as exc:
-                kind, detail = FailureKind.GIT, str(exc)
-            except GhError as exc:
-                kind, detail = FailureKind.GITHUB, str(exc)
-            except Exception as exc:  # noqa: BLE001 - a Cardinal defect; recorded with its traceback
-                kind, detail = FailureKind.CRASH, f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-3000:]}"
+            with bind(stage=stage):
+                try:
+                    return node(state, run)
+                except StageFailure as exc:
+                    kind, detail, error = exc.kind, exc.detail, exc
+                except (GitError, subprocess.CalledProcessError) as exc:
+                    kind, detail, error = FailureKind.GIT, str(exc), exc
+                except GhError as exc:
+                    kind, detail, error = FailureKind.GITHUB, str(exc), exc
+                except Exception as exc:  # noqa: BLE001 - a Cardinal defect; recorded with its traceback
+                    kind, error = FailureKind.CRASH, exc
+                    detail = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()[-3000:]}"
+                # A StageFailure raised from a lower error carries that error's stack, where the defect is.
+                cause = error.__cause__ if isinstance(error, StageFailure) and error.__cause__ else error
+                log.log(kind.level, "stage %s failed (%s): %s", stage, kind.value, detail[:500], exc_info=cause,
+                        extra={"event": "stage_failed", "failure_kind": kind.value})
             run.recorder.event(stage, "failure", {"kind": kind.value, "detail": detail})
             return {"status": "failed", "failure": {"kind": kind.value, "detail": detail, "stage": stage}}
         return wrapper

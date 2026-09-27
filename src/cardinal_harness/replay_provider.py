@@ -15,6 +15,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from pydantic import PrivateAttr
 
 from cardinal.contracts.intake import IntakeDecision, Requirement, Ticket
+from cardinal.contracts.monitor import IssueDraft
 from cardinal.contracts.profile import ProfileChunk, ProfileFile
 from cardinal.contracts.verdict import VerifierAssessment
 
@@ -59,6 +60,8 @@ def last_result(messages: list) -> dict | list | str:
 
 def provider(context: dict):
     stage = context["stage"]
+    if stage == "monitor":
+        return monitor(context)
     title = context["issue"]["title"]
     return {"profiler": profiler, "orchestrator": orchestrator, "coder": coder, "verifier": verifier,
             "pr_manager": pr_manager, "deployer": deployer}[stage](context, title)
@@ -135,6 +138,17 @@ def decision_for(context: dict) -> IntakeDecision:
             id="ARCHIVE", source_issue=number, title="Cover the archive behavior", task="Keep records; add a check.",
             acceptance_criteria=["The default listing is unchanged"], covers=["R1"], depends_on=[],
             target_files=["ledger/__main__.py"])], **common)
+    if title.startswith("Summarise spending by merchant"):
+        raise KeyError("merchant_totals")  # stands in for a defect in Cardinal itself
+    if title.startswith("Ledger totals crash"):
+        return IntakeDecision(kind="bug", reason="The traceback names the failing division", tickets=[Ticket(
+            id="EMPTY-TOTAL", source_issue=number, title="Guard the empty total", task="Return 0 for no transactions.",
+            acceptance_criteria=["An empty input totals 0"], covers=["R1"], depends_on=[],
+            target_files=["ledger/query.py"])], **{**common, "requirements": [
+                Requirement(id="R1", text="Totalling no transactions returns 0 instead of raising")]})
+    if title.startswith("Intake crashes"):
+        return IntakeDecision(kind="needs_human", size="m", risks=[], requirements=[], tickets=[], issue_number=number,
+                              reason="The crash comes from the model provider hook; which component owns it?")
     if title.startswith("Add a total flag"):
         return IntakeDecision(kind="feature", reason="One CLI flag", tickets=[Ticket(
             id="TOTAL", source_issue=number, title="Print a total", task="Add --total printing the amount sum.",
@@ -151,6 +165,22 @@ def orchestrator(context: dict, title: str):
         call("read_file", {"file_path": "/context/issue.json"}, "issue"),
         *(call("find_repo_context", {"query": query}, f"context-{index}") for index, query in enumerate(queries)),
         call("IntakeDecision", decision.model_dump(), "decision"),
+    ]))
+
+
+# --- monitor ------------------------------------------------------------------------------------
+
+MONITOR_TITLES = {"example/ledger": "Ledger totals crash with ZeroDivisionError on empty input",
+                  "example/cardinal": "Intake crashes with KeyError merchant_totals"}
+
+
+def monitor(context: dict):
+    draft = IssueDraft(title=MONITOR_TITLES[context["repo"]],
+                       body="Replay draft: the grouped records show the same exception repeating; see the evidence.")
+    return Scripted(messages=iter([
+        call("read_file", {"file_path": "/skills/monitor/SKILL.md"}, "skill"),
+        call("read_file", {"file_path": "/context/finding.json"}, "finding"),
+        call("IssueDraft", draft.model_dump(), "draft"),
     ]))
 
 

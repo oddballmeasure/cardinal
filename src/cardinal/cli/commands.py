@@ -1,6 +1,7 @@
 """Command implementations. Each returns a JSON-able payload, or (payload, exit code)."""
 
 import json
+import logging
 import os
 import shutil
 import sys
@@ -11,9 +12,14 @@ from cardinal.daemon import loop
 from cardinal.github import issues
 from cardinal.github.gh import GhError, gh, gh_json
 from cardinal.home import Home
+from cardinal.ingest import server
+from cardinal.logs import setup
+from cardinal.logs.record import LogRecord
+from cardinal.monitor import monitor
 from cardinal.repo.git import GitError, git
 from cardinal.store.db import connect
 
+log = logging.getLogger(__name__)
 EXIT = {"done": 0, "failed": 1, "awaiting_human": 3, "rejected": 4}
 PROVIDER_KEYS = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
@@ -22,10 +28,29 @@ def dispatch(args):
     home = Home.resolve(args.home)
     if args.command == "init":
         return init(home, args.repo)
+    if args.command == "logs":
+        return LogRecord.model_json_schema()
     config = load(home)
     db = connect(home.store)
+    sink = setup.install(home, config, db)
+    try:
+        return route(args, home, config, db, sink)
+    except (ValueError, FileNotFoundError):
+        raise
+    except Exception:
+        log.critical("cardinal %s crashed", args.command, exc_info=True, extra={"event": "command_crashed"})
+        raise
+
+
+def route(args, home: Home, config, db, sink):
     if args.command == "status":
         return status(db, args.repo and config.repo(args.repo).slug, args.issue, args.json)
+    if args.command == "ingest":
+        return server.serve(config, sink)
+    if args.command == "monitor":
+        if args.once:
+            return monitor.once(home, config, db)
+        monitor.serve(home, config, db, args.interval)
     repo = config.repo(args.repo)
     if args.command == "repos":
         return check(home, config, repo)
@@ -69,6 +94,8 @@ def check(home: Home, config, repo) -> int:
             results[name] = f"ok {action() or ''}".strip()
         except (GhError, GitError, OSError, ValueError, KeyError) as exc:
             results[name] = f"FAILED {exc}"
+            log.error("repos check probe %s failed", name, exc_info=exc,
+                      extra={"event": "probe_failed", "data": {"probe": name, "repo": repo.slug}})
 
     probe("gh auth", lambda: gh("auth", "status") and None)
     probe("repository", lambda: gh_json("repo", "view", repo.slug, "--json", "nameWithOwner")["nameWithOwner"])

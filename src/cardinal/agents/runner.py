@@ -1,5 +1,6 @@
 """Run one Deep Agents call, record what it cost, and classify how it ended."""
 
+import logging
 import time
 from dataclasses import dataclass, field
 from importlib import resources
@@ -17,6 +18,7 @@ from cardinal.graph.failures import FailureKind, StageFailure
 from cardinal.store.db import now
 from cardinal.store.recorder import Recorder
 
+log = logging.getLogger(__name__)
 SKILLS = Path(str(resources.files("cardinal").joinpath("skills")))
 PROVIDER_MODULES = {"openai", "anthropic", "httpx", "httpcore", "google"}
 
@@ -97,8 +99,14 @@ def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_t
     except Exception as exc:
         kind = classify(exc)
         outcome = kind.value
+        log.log(kind.level, "%s agent call failed: %s", call.stage, type(exc).__name__, exc_info=exc,
+                extra={"event": "agent_call_failed", "failure_kind": kind.value, "data": {"model": call.model_spec}})
         raise StageFailure(kind, f"{call.stage}: {type(exc).__name__}: {str(exc)[:1500]}") from exc
     finally:
         messages = state.get("messages", [])
+        log.info("%s agent call ended %s", call.stage, outcome,
+                 extra={"event": "agent_call", "data": {"model": call.model_spec, "ticket_id": call.ticket_id,
+                                                         "seconds": round(time.monotonic() - clock, 2),
+                                                         "tokens": usage(messages), "outcome": outcome}})
         recorder.agent_call(call.stage, call.ticket_id, started, time.monotonic() - clock,
                             usage(messages), tool_names(messages), outcome, transcript(messages))

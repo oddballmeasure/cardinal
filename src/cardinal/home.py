@@ -29,6 +29,10 @@ class Home:
     def checkpoints(self) -> Path:
         return self.root / "checkpoints.db"
 
+    @property
+    def logs(self) -> Path:
+        return self.root / "logs"
+
     def clone(self, slug: str) -> Path:
         return self.root / "clones" / safe(slug)
 

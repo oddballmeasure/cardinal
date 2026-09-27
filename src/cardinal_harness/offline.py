@@ -33,6 +33,7 @@ ISSUES = {
     13: ("Purge transactions older than one year", "- R1: Permanently delete every transaction dated over a year ago."),
     14: ("Add a total flag", "- R1: --total prints the sum of the selected amounts."),
     15: ("Archive transactions older than one year", "- R1: Move transactions dated over a year ago to an archive."),
+    16: ("Summarise spending by merchant", "- R1: --by-merchant prints each merchant's total."),
 }
 ACCEPTANCE = {104: ["test_since_is_inclusive", "test_invalid_since_is_rejected", "test_csv_preserves_quoting_and_unicode",
                     "test_empty_csv_keeps_header", "test_since_and_csv_combine"]}
@@ -69,7 +70,7 @@ def world(temp: Path, ready: list[int], ci: list[str] | None = None,
 def configure(temp: Path, bare: Path, state_path: Path, artifact: Path) -> Product:
     home = temp / "home"
     write_config(home, models={role: "replay:scripted" for role in
-                               ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer")},
+                               ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor")},
                  slug=SLUG, remote_url=str(bare), test_command=[sys.executable, "-m", "pytest", "-q", "tests"],
                  required_checks=[CHECK], paths_off_limits=[".github/"], deploy="local",
                  limits={"coder_attempts": 2, "ci_poll_seconds": 1, "ci_timeout_seconds": 120})
@@ -251,8 +252,13 @@ def cleaner(temp: Path, artifact: Path) -> dict:
     return {"checks": checks}
 
 
+def monitor(temp: Path, artifact: Path) -> dict:
+    from cardinal_harness.monitor_scenario import scenario  # imports offline; kept local to avoid a cycle
+    return scenario(temp, artifact)
+
+
 SCENARIOS = {"single": single, "daemon": daemon, "ci-failure": ci_failure, "deploy": deploy,
-             "cleaner": cleaner}
+             "cleaner": cleaner, "monitor": monitor}
 
 
 def run(scenario: str, artifact: Path) -> dict:

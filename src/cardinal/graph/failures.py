@@ -1,5 +1,6 @@
 """Why a run stopped, as a type the daemon can route on (lessons/classify-failures-from-counters.md)."""
 
+import logging
 from enum import StrEnum
 
 
@@ -18,6 +19,13 @@ class FailureKind(StrEnum):
     GIT = "git"
     GITHUB = "github"
     CRASH = "crash"                          # a defect in Cardinal itself
+
+    @property
+    def level(self) -> int:
+        """Defects in Cardinal or its tools are errors; outcomes of honest work are warnings."""
+        outcomes = {FailureKind.TESTS_FAILED, FailureKind.NO_CHANGE, FailureKind.VERIFICATION,
+                    FailureKind.CI_FAILED, FailureKind.CI_TIMEOUT, FailureKind.PROVIDER}
+        return logging.WARNING if self in outcomes else logging.ERROR
 
     @property
     def retryable(self) -> bool:

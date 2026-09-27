@@ -20,6 +20,7 @@ class RoleModels(Strict):
     verifier: str = Field(min_length=1)
     pr_manager: str = Field(min_length=1)
     deployer: str = Field(min_length=1)
+    monitor: str = Field(min_length=1)
 
 
 class Limits(Strict):
@@ -44,9 +45,26 @@ class Labels(Strict):
     done: str = "cardinal:done"
     error: str = "cardinal:error"
     needs_human: str = "cardinal:needs-human"
+    investigate: str = "cardinal:investigate"
 
     def state_axis(self) -> list[str]:
-        return [self.ready, self.working, self.done, self.error, self.needs_human]
+        return [self.ready, self.working, self.done, self.error, self.needs_human, self.investigate]
+
+
+class Logging(Strict):
+    level: Literal["debug", "info", "warning", "error", "critical"]
+    source_repo: str = Field(pattern=SLUG.pattern, description="Where Cardinal's own defects are filed")
+
+
+class Ingest(Strict):
+    bind: str = Field(pattern=r"^[^:\s]+:\d{1,5}$", description="host:port the ingest endpoint listens on")
+    token_env: str = Field(min_length=1, description="Environment variable holding the bearer token apps send")
+
+
+class Monitor(Strict):
+    min_occurrences: int = Field(ge=1, description="Error records a fingerprint needs within the window")
+    window_hours: float = Field(gt=0)
+    max_issues_per_pass: int = Field(ge=1, le=20, description="Caps an error storm, including the monitor's own")
 
 
 class Repo(Strict):
@@ -68,6 +86,9 @@ class Repo(Strict):
 
 class Config(Strict):
     models: RoleModels
+    logging: Logging
+    ingest: Ingest | None = None
+    monitor: Monitor | None = None
     limits: Limits = Limits()
     repos: list[Repo] = Field(min_length=1)
 
