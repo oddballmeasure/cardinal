@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cardinal"
+version = "0.1.0"
+description = "An agentic harness that resolves GitHub issues, with an external E2E grading harness"
+requires-python = ">=3.13,<4"
+dependencies = [
+    "deepagents>=0.7,<0.8",
+    "langgraph>=1.2,<2",
+    "langgraph-checkpoint-sqlite>=3,<4",
+    "langchain-core>=1.6,<2",
+    "pydantic>=2.10,<3",
+    "pytest>=8,<10",
+]
+
+[project.optional-dependencies]
+openai = ["langchain-openai>=1,<2"]
+e2e = ["playwright>=1.50,<2"]
+
+[project.scripts]
+cardinal = "cardinal.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+cardinal = ["skills/**/*.md", "skills/*.md", "store/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/e2e"]

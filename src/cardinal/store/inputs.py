@@ -1,0 +1,35 @@
+"""State Cardinal acts on. These writes raise: silently losing one would re-claim or re-pay."""
+
+import json
+import sqlite3
+
+from cardinal.contracts.profile import RepoProfile
+from cardinal.store.db import now
+
+
+def load_profile(db: sqlite3.Connection, repo: str) -> RepoProfile | None:
+    row = db.execute("SELECT profile FROM repo_profiles WHERE repo = ?", (repo,)).fetchone()
+    return RepoProfile.model_validate_json(row["profile"]) if row else None
+
+
+def save_profile(db: sqlite3.Connection, profile: RepoProfile) -> None:
+    db.execute(
+        "INSERT INTO repo_profiles (repo, revision, content_hash, profile, updated_at) VALUES (?, ?, ?, ?, ?)"
+        " ON CONFLICT(repo) DO UPDATE SET revision = excluded.revision, content_hash = excluded.content_hash,"
+        " profile = excluded.profile, updated_at = excluded.updated_at",
+        (profile.repository, profile.revision, profile.content_hash,
+         json.dumps(profile.model_dump(), ensure_ascii=False), now()),
+    )
+
+
+def claim(db: sqlite3.Connection, repo: str, issue: int, run_id: str) -> bool:
+    """True only for the caller that inserted the row; a held claim is never taken over."""
+    cursor = db.execute(
+        "INSERT OR IGNORE INTO claims (repo, issue, run_id, claimed_at) VALUES (?, ?, ?, ?)",
+        (repo, issue, run_id, now()),
+    )
+    return cursor.rowcount == 1
+
+
+def release(db: sqlite3.Connection, repo: str, issue: int) -> None:
+    db.execute("DELETE FROM claims WHERE repo = ? AND issue = ?", (repo, issue))

@@ -1,0 +1,6 @@
+{
+  "repository": "example/ledger",
+  "number": 104,
+  "title": "Filter transactions by date and export CSV",
+  "body": "Extend the ledger CLI without changing its default JSON output.\n\n- R1: Add --since YYYY-MM-DD; include transactions on that date and later, preserving input order.\n- R2: Reject impossible --since dates with a nonzero exit and an error that includes the supplied date.\n- R3: Add --format csv with columns id,date,merchant,amount; correctly quote commas and preserve Unicode.\n- R4: CSV with no matching transactions still prints its header.\n- R5: --since and --format csv work together."
+}

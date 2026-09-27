@@ -1,0 +1,6 @@
+{
+  "repository": "oddballmeasure/cardinal_test_repo",
+  "number": 0,
+  "title": "Add Redis-backed diary API",
+  "body": "Add a persistent API for dated diary entries.\n\n- R1: POST /diaries accepts date, title, and body and returns the created entry as JSON.\n- R2: GET /diaries returns entries in creation order.\n- R3: Reject an invalid date or missing/empty required fields with HTTP 400 without adding an entry.\n- R4: Keep diary data in Redis so it survives restarting only the API container. Add HTTP E2E tests.\n"
+}

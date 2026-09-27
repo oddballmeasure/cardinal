@@ -1,0 +1,13 @@
+{
+  "id": "ISSUE-104-DATE",
+  "source_issue": 104,
+  "title": "Filter transactions by inclusive date",
+  "task": "Add --since YYYY-MM-DD to the ledger CLI. Include records on and after that date while preserving input order, and reject impossible dates with a useful error.",
+  "acceptance_criteria": [
+    "2026-02-03 includes the transaction dated 2026-02-03 and later transactions.",
+    "2026-02-30 exits nonzero and appears in the error."
+  ],
+  "covers": ["R1", "R2"],
+  "depends_on": [],
+  "target_files": ["ledger/__main__.py", "ledger/query.py", "tests/test_cli.py"]
+}

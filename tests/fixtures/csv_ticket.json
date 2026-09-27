@@ -1,0 +1,14 @@
+{
+  "id": "ISSUE-104-CSV",
+  "source_issue": 104,
+  "title": "Export filtered transactions as CSV",
+  "task": "Add --format csv with id,date,merchant,amount columns. Quote fields correctly, keep Unicode, print a header for empty results, and support --since with CSV.",
+  "acceptance_criteria": [
+    "CSV quotes commas in merchant names and preserves Unicode.",
+    "An empty CSV result contains only the header.",
+    "--since and --format csv work together."
+  ],
+  "covers": ["R3", "R4", "R5"],
+  "depends_on": ["ISSUE-104-DATE"],
+  "target_files": ["ledger/__main__.py", "ledger/formatters.py", "tests/test_cli.py"]
+}

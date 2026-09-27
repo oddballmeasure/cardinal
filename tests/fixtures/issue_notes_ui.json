@@ -1,0 +1,6 @@
+{
+  "repository": "oddballmeasure/cardinal_test_repo",
+  "number": 0,
+  "title": "Add a note creation form",
+  "body": "Add a browser interface for creating notes with the existing API.\n\n- R1: Show a note form with required title and comma-separated tags fields.\n- R2: Split and trim tags, preserving Unicode, and submit title plus tags to POST /api/notes.\n- R3: Show the returned note in the notes list without requiring a reload; reject an empty title. Add repository browser E2E tests.\n"
+}

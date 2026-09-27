@@ -1,0 +1,6 @@
+{
+  "repository": "oddballmeasure/cardinal_test_repo",
+  "number": 1,
+  "title": "Filter notes by tag and export CSV",
+  "body": "Extend the notes HTTP service without changing its default JSON responses.\n\n- R1: GET /notes?tag=VALUE returns notes with an exactly matching tag, ignoring case and preserving creation order.\n- R2: GET /notes?format=csv returns text/csv with columns id,title,tags. Join multiple tags in one field with semicolons; quote CSV fields correctly and preserve Unicode.\n- R3: CSV with no matching notes still contains the header and no data rows.\n- R4: tag and format=csv work together in one GET /notes request.\n- R5: GET /notes without query options still returns the original JSON list and POST /notes still creates notes."
+}

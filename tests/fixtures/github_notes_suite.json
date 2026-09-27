@@ -1,0 +1,88 @@
+{
+  "repository": "oddballmeasure/cardinal_test_repo",
+  "baseline_sha": "7a2e92af59546ad07a1641b070fa01cb50a905fb",
+  "ready_label": "cardinal:ready",
+  "cases": [
+    {
+      "key": "easy",
+      "difficulty": "easy",
+      "issue_fixture": "tests/fixtures/issue_notes_easy.json",
+      "acceptance": "tests/acceptance/test_notes_easy.py",
+      "requirement_ids": ["R1", "R2", "R3"],
+      "acceptance_tests": {
+        "R1": "test_get_note_by_id_returns_created_note",
+        "R2": "test_get_missing_and_invalid_note_ids_return_404",
+        "R3": "test_get_note_by_id_preserves_list_response"
+      },
+      "expected_targets": {"R1": "api/app/routes/notes.py"}
+    },
+    {
+      "key": "note-ui",
+      "difficulty": "easy",
+      "issue_fixture": "tests/fixtures/issue_notes_ui.json",
+      "acceptance": "tests/acceptance/test_notes_ui.py",
+      "requirement_ids": ["R1", "R2", "R3"],
+      "acceptance_tests": {
+        "R1": "test_note_form_has_required_title_and_tags_fields",
+        "R2": "test_note_form_submits_title_and_comma_separated_tags",
+        "R3": "test_note_list_updates_without_reload_and_empty_title_is_rejected"
+      },
+      "expected_targets": {"R1": "frontend/src/App.tsx", "R2": "frontend/src/App.tsx"}
+    },
+    {
+      "key": "medium",
+      "difficulty": "medium",
+      "issue_fixture": "tests/fixtures/issue_notes_medium.json",
+      "acceptance": "tests/acceptance/test_notes_medium.py",
+      "requirement_ids": ["R1", "R2", "R3"],
+      "acceptance_tests": {
+        "R1": "test_patch_title_updates_only_title",
+        "R2": "test_patch_tags_preserves_id_and_list_order",
+        "R3": "test_invalid_patch_is_atomic_and_missing_id_is_404"
+      },
+      "expected_targets": {"R1": "api/app/routes/notes.py"}
+    },
+    {
+      "key": "diary-api",
+      "difficulty": "medium",
+      "issue_fixture": "tests/fixtures/issue_diary_api.json",
+      "acceptance": "tests/acceptance/test_diary_api.py",
+      "requirement_ids": ["R1", "R2", "R3", "R4"],
+      "acceptance_tests": {
+        "R1": "test_post_diary_returns_created_dated_entry",
+        "R2": "test_get_diaries_returns_entries_in_creation_order",
+        "R3": "test_invalid_diary_fields_are_rejected_without_mutation",
+        "R4": "test_diaries_survive_api_container_restart"
+      },
+      "expected_targets": {"R1": "api/app/routes/diaries.py", "R4": "api/app/storage.py"}
+    },
+    {
+      "key": "hard",
+      "difficulty": "hard",
+      "issue_fixture": "tests/fixtures/issue_notes_001.json",
+      "acceptance": "tests/acceptance/test_notes_service.py",
+      "requirement_ids": ["R1", "R2", "R3", "R4", "R5"],
+      "acceptance_tests": {
+        "R1": "test_tag_filter_is_exact_case_insensitive_and_ordered",
+        "R2": "test_csv_quotes_commas_and_preserves_unicode",
+        "R3": "test_empty_filtered_csv_has_header_only",
+        "R4": "test_filter_and_csv_combine",
+        "R5": "test_default_json_and_post_still_work"
+      },
+      "expected_targets": {"R1": "api/app/routes/notes.py", "R2": "api/app/formatters.py"}
+    },
+    {
+      "key": "diary-ui",
+      "difficulty": "hard",
+      "issue_fixture": "tests/fixtures/issue_diary_ui.json",
+      "acceptance": "tests/acceptance/test_diary_ui.py",
+      "requirement_ids": ["R1", "R2", "R3"],
+      "acceptance_tests": {
+        "R1": "test_diary_form_has_required_date_title_and_body",
+        "R2": "test_diary_form_submits_and_shows_entry",
+        "R3": "test_diary_entries_remain_visible_after_reload"
+      },
+      "expected_targets": {"R1": "frontend/src/App.tsx", "R2": "frontend/src/App.tsx"}
+    }
+  ]
+}

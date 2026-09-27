@@ -1,0 +1,22 @@
+"""What the checkpointer keeps between nodes. Plain JSON-able values only."""
+
+from typing import TypedDict
+
+
+class RunState(TypedDict, total=False):
+    status: str                   # running | awaiting_human | rejected | done | failed
+    failure: dict | None          # {"kind": FailureKind, "detail": str}
+    base_sha: str
+    profile_revision: str
+    decision: dict                # IntakeDecision
+    tickets: list[dict]           # Tickets in dependency order
+    question: str                 # what the orchestrator asked a person
+    human_answer: str | None
+    repair: list[str] | None      # verifier findings to resolve in the next implement round
+    verify_round: int
+    head_sha: str
+    head_tests: dict              # CommandEvidence observed at head_sha
+    verdict: dict
+    pr: dict
+    merge_sha: str
+    deployment: dict

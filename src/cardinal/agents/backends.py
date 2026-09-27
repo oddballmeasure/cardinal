@@ -1,0 +1,102 @@
+"""What an agent can see and touch.
+
+Agents get no shell. The worktree is the only writable mount, and even there `.git`, vendor
+directories and the repository's off-limits paths refuse writes. Skills and run context are
+mounted read-only, so an agent cannot rewrite its own instructions or the evidence it is judged
+on. Vendor output is dropped before a listing or search result is returned to the model
+(lessons/exclude-vendor-before-returning.md).
+"""
+
+from pathlib import Path
+
+from deepagents.backends import CompositeBackend, FilesystemBackend
+from deepagents.backends.protocol import DeleteResult, EditResult, FileUploadResponse, GlobResult, GrepResult, LsResult, WriteResult
+
+VENDOR = {"node_modules", ".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
+          ".ruff_cache", "dist", "build", ".next", "coverage", ".tox", ".cache"}
+MAX_MATCHES = 200
+MAX_LINE = 400
+
+
+def vendored(path: str) -> bool:
+    return any(part in VENDOR for part in path.strip("/").split("/"))
+
+
+class ReadOnlyBackend(FilesystemBackend):
+    def write(self, file_path: str, content: str) -> WriteResult:
+        return WriteResult(error=f"{file_path} is read-only")
+
+    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:  # noqa: FBT001, FBT002
+        return EditResult(error=f"{file_path} is read-only")
+
+    def delete(self, file_path: str) -> DeleteResult:
+        return DeleteResult(error=f"{file_path} is read-only")
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        return [FileUploadResponse(path=path, error="permission_denied") for path, _ in files]
+
+
+class RepoBackend(FilesystemBackend):
+    def __init__(self, root: Path, off_limits: list[str], *, writable: bool) -> None:
+        super().__init__(root_dir=str(root), virtual_mode=True)
+        self.off_limits = [item.strip("/") for item in off_limits if item.strip("/")]
+        self.writable = writable
+
+    def _refusal(self, path: str) -> str | None:
+        if not self.writable:
+            return f"{path} is read-only in this stage"
+        relative = path.strip("/")
+        if vendored(relative):
+            return f"{path} is a vendor or git path and cannot be changed"
+        for prefix in self.off_limits:
+            if relative == prefix or relative.startswith(prefix + "/"):
+                return f"{path} is off limits for this repository"
+        return None
+
+    def ls(self, path: str) -> LsResult:
+        result = super().ls(path)
+        if result.entries is not None:
+            result.entries = [entry for entry in result.entries if not vendored(entry["path"])]
+        return result
+
+    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+        result = super().glob(pattern, path)
+        if result.matches is not None:
+            result.matches = [entry for entry in result.matches if not vendored(entry["path"])]
+        return result
+
+    def grep(self, pattern: str, path: str | None = None, glob: str | None = None, *, max_count: int | None = None) -> GrepResult:
+        result = super().grep(pattern, path, glob, max_count=max_count)
+        if result.matches is not None:
+            kept = [match for match in result.matches if not vendored(match["path"])]
+            for match in kept:
+                if len(match["text"]) > MAX_LINE:
+                    match["text"] = match["text"][:MAX_LINE] + " …[line clipped]"
+            if len(kept) > MAX_MATCHES:
+                kept, result.truncated = kept[:MAX_MATCHES], True
+            result.matches = kept
+        return result
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        refusal = self._refusal(file_path)
+        return WriteResult(error=refusal) if refusal else super().write(file_path, content)
+
+    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:  # noqa: FBT001, FBT002
+        refusal = self._refusal(file_path)
+        return EditResult(error=refusal) if refusal else super().edit(file_path, old_string, new_string, replace_all)
+
+    def delete(self, file_path: str) -> DeleteResult:
+        refusal = self._refusal(file_path)
+        return DeleteResult(error=refusal) if refusal else super().delete(file_path)
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        return [FileUploadResponse(path=path, error="permission_denied") for path, _ in files]
+
+
+def mounts(worktree: Path | None, context: Path, skills: Path, off_limits: list[str], *, repo_writable: bool) -> CompositeBackend:
+    """/repo/ is the worktree, /context/ the run's inputs, /skills/ the packaged instructions."""
+    routes = {"/context/": ReadOnlyBackend(root_dir=str(context), virtual_mode=True),
+              "/skills/": ReadOnlyBackend(root_dir=str(skills), virtual_mode=True)}
+    if worktree is not None:
+        routes["/repo/"] = RepoBackend(worktree, off_limits, writable=repo_writable)
+    return CompositeBackend(default=ReadOnlyBackend(root_dir=str(context), virtual_mode=True), routes=routes)

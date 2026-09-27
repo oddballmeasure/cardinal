@@ -1,0 +1,5 @@
+[
+  {"id": "t-001", "date": "2026-02-02", "merchant": "Office, East", "amount": "12.50"},
+  {"id": "t-002", "date": "2026-02-03", "merchant": "Café", "amount": "7.25"},
+  {"id": "t-003", "date": "2026-02-05", "merchant": "Books", "amount": "15.00"}
+]

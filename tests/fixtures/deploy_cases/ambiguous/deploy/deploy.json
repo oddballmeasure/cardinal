@@ -1,0 +1,1 @@
+{"host":"fixture-host","user":"deployer","working_directory":"/srv/ledger","deploy_timeout_seconds":3,"health":{"command":"printf 'healthy execution'","expected_stdout":"healthy execution","timeout_seconds":0.2,"interval_seconds":0.05}}

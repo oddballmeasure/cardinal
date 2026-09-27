@@ -1,0 +1,6 @@
+{
+  "repository": "oddballmeasure/cardinal_test_repo",
+  "number": 0,
+  "title": "Update note fields with PATCH",
+  "body": "Add partial note updates to the existing HTTP service.\n\n- R1: PATCH /notes/{id} with title changes only the title and returns the updated JSON note.\n- R2: PATCH /notes/{id} with tags changes only tags, preserves the ID and list order, and supports Unicode.\n- R3: An empty title or invalid tags returns 400 without changing the note; an unknown ID returns 404. Add repository HTTP E2E tests."
+}

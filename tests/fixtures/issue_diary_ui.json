@@ -1,0 +1,6 @@
+{
+  "repository": "oddballmeasure/cardinal_test_repo",
+  "number": 0,
+  "title": "Add a diary entry form",
+  "body": "Add a browser interface for creating and viewing diary entries. Depends on #11 (Add Redis-backed diary API).\n\n- R1: Show required date, title, and body fields with a Create diary action.\n- R2: Submit entries through the diary API and show the returned entry in the list immediately.\n- R3: Reloading the page still shows entries stored by the API. Add browser E2E tests.\n"
+}

@@ -1,0 +1,6 @@
+{
+  "repository": "oddballmeasure/cardinal_test_repo",
+  "number": 0,
+  "title": "Read a note by ID",
+  "body": "Add a note retrieval endpoint to the existing HTTP service.\n\n- R1: GET /notes/{id} returns status 200 and the exact JSON note created by POST /notes.\n- R2: Unknown or nonnumeric IDs return status 404 with a JSON error.\n- R3: Retrieving one note does not alter the existing ordered GET /notes response. Add repository HTTP E2E tests."
+}
