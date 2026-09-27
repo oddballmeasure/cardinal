@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="cardinal.png" alt="Cardinal logo: a red cardinal perched on a circuit branch beside code symbols" width="200">
-</p>
-
-# Cardinal
+# <img src="cardinal.png" alt="Cardinal logo: a red cardinal perched on a circuit branch" width="56" align="middle"> Cardinal
 
 Cardinal resolves GitHub issues in repositories it does not own. One orchestrator call decides
 whether to take an issue and splits it into tickets; coders implement them in an isolated
