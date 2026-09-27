@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="cardinal.png" alt="Cardinal logo: a red cardinal perched on a circuit branch beside code symbols" width="200">
+</p>
+
 # Cardinal
 
 Cardinal resolves GitHub issues in repositories it does not own. One orchestrator call decides
