@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 
 from langchain.chat_models import init_chat_model
@@ -31,8 +32,25 @@ from cardinal_harness.github_setup import (discover_cases, load_model_key, prepa
                                            use_github_cli_git_credentials, wait_baseline_ci)
 from cardinal_harness.product import FIXTURES, ROOT, Product, json_file, product_env, write_config
 
-CHECK = "http-e2e"
+NOTES_SUITE = ROOT / "tests" / "fixtures" / "github_notes_suite.json"
 ROLES = ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor")
+
+
+@dataclass(frozen=True)
+class Target:
+    """What a suite file says about its repository: where it is checked out, how it tests itself,
+    which CI check gates a merge, and whether a merge deploys."""
+
+    checkout: Path
+    test_command: list[str]
+    check: str
+    deploy: str | None
+    paths_off_limits: list[str]
+
+    @classmethod
+    def of(cls, suite: dict) -> "Target":
+        command = [sys.executable if part == "{python}" else part for part in suite["test_command"]]
+        return cls(ROOT / suite["checkout"], command, suite["required_check"], suite["deploy"], suite["paths_off_limits"])
 
 
 def gh_json(*args: str):
@@ -65,27 +83,29 @@ def acceptance(url: str, temp: Path, case: dict, label: str) -> dict:
             "expected": len(case["requirement_ids"]), "stdout": evidence.stdout[-3000:]}
 
 
-def environment_preflight(url: str, temp: Path) -> dict:
+def environment_preflight(url: str, temp: Path, target: Target) -> dict:
     """Run the test repository's own suite at the baseline, where it must pass. A failure here is the
     machine (Docker, browsers, network), not Cardinal (lessons/docker-credential-helper-hang.md)."""
     repo = fresh_clone(url, temp / "preflight")
-    result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "tests"], cwd=repo,
-                            text=True, capture_output=True, check=False, timeout=1200)
+    # Same environment the product gives the test command, so a baseline pass here predicts one there.
+    result = subprocess.run(target.test_command, cwd=repo, env=product_env({}), text=True, capture_output=True,
+                            check=False, timeout=1500)
     return {"exit_code": result.returncode, "stdout": result.stdout[-3000:], "stderr": result.stderr[-2000:]}
 
 
-def check_run(repository: str, sha: str | None) -> str | None:
+def check_run(repository: str, sha: str | None, check: str) -> str | None:
     if not sha:
         return None
     try:
         found = gh_json("api", f"repos/{repository}/commits/{sha}/check-runs")["check_runs"]
     except subprocess.CalledProcessError:  # GitHub has never seen this commit: it was not pushed
         return None
-    runs = [run for run in found if run["name"] == CHECK and run["head_sha"] == sha]
+    runs = [run for run in found if run["name"] == check and run["head_sha"] == sha]
     return max(runs, key=lambda run: run["id"])["conclusion"] if runs else None
 
 
-def grade_case(product: Product, case: dict, url: str, repository: str, temp: Path, solved: list[dict], result: dict) -> dict:
+def grade_case(product: Product, case: dict, url: str, repository: str, temp: Path, solved: list[dict], result: dict,
+               target: Target) -> dict:
     number = case["issue"]["number"]
     checks: dict = {}
 
@@ -103,8 +123,11 @@ def grade_case(product: Product, case: dict, url: str, repository: str, temp: Pa
                  "--json", "state,headRefOid,mergeCommit") if run.get("pr_number") else {}
     expect("PR merged the verified head", pr.get("state") == "MERGED" and pr.get("headRefOid") == run.get("head_sha"),
            {"pr": pr, "verified": run.get("head_sha")})
-    expect(f"{CHECK} passed on the verified head", check_run(repository, run.get("head_sha")) == "success")
-    expect("deployed revision is the merge", run.get("deployed_sha") == main, run.get("deployed_sha"))
+    expect(f"{target.check} passed on the verified head", check_run(repository, run.get("head_sha"), target.check) == "success")
+    if target.deploy:
+        expect("deployed revision is the merge", run.get("deployed_sha") == main, run.get("deployed_sha"))
+    else:
+        expect("nothing was deployed", run.get("deployed_sha") is None, run.get("deployed_sha"))
     after = acceptance(url, temp, case, "after")
     expect("acceptance passes on the new main", after["exit_code"] == 0 and after["passed_tests"] == after["expected"], after)
     calls = run.get("agent_calls", [])
@@ -138,6 +161,7 @@ def run_suite(suite_path: Path, model: str, artifact: Path, only: list[str] | No
 
 def run_locked(suite_path: Path, model: str, artifact: Path, only: list[str] | None) -> dict:
     suite = json.loads(suite_path.read_text())
+    target = Target.of(suite)
     repository, url = suite["repository"], f"https://github.com/{suite['repository']}"
     report: dict = {"suite": str(suite_path), "model": model, "cases": [], "passed": False}
     discovered: list[dict] = []
@@ -149,7 +173,7 @@ def run_locked(suite_path: Path, model: str, artifact: Path, only: list[str] | N
         try:
             load_model_key()
             use_github_cli_git_credentials()
-            report["test_repo_preflight"] = prepare_test_repo(url, ROOT / "tests" / "blank_repo")
+            report["test_repo_preflight"] = prepare_test_repo(url, target.checkout)
             json_file(artifact / "test_repo_preflight.json", report["test_repo_preflight"])
             probe = init_chat_model(model).invoke("Reply with OK only.")
             if str(probe.content).strip() != "OK":
@@ -158,8 +182,8 @@ def run_locked(suite_path: Path, model: str, artifact: Path, only: list[str] | N
             report["baseline_sha"] = baseline
             if suite.get("baseline_sha") and suite["baseline_sha"] != baseline:
                 raise ValueError("Remote main differs from the suite's pinned baseline")
-            wait_baseline_ci(repository, baseline, artifact)
-            preflight = environment_preflight(url, temp)
+            wait_baseline_ci(repository, baseline, artifact, target.check)
+            preflight = environment_preflight(url, temp, target)
             report["environment_preflight"] = preflight
             if preflight["exit_code"] != 0:
                 raise ValueError("The test repository's own suite fails at the baseline on this machine; "
@@ -174,8 +198,8 @@ def run_locked(suite_path: Path, model: str, artifact: Path, only: list[str] | N
             json_file(artifact / "parked_issues.json", parked)
             home = temp / "home"
             write_config(home, models={role: model for role in ROLES}, slug=repository, remote_url=url,
-                         test_command=[sys.executable, "-m", "pytest", "-q", "tests"], required_checks=[CHECK],
-                         paths_off_limits=[".github/"], deploy="local")
+                         test_command=target.test_command, required_checks=[target.check],
+                         paths_off_limits=target.paths_off_limits, deploy=target.deploy)
             product = Product(home, product_env({
                 "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
                 "CARDINAL_DEPLOY_HOST": "cardinal_harness.mock_host:factory",
@@ -196,7 +220,7 @@ def run_locked(suite_path: Path, model: str, artifact: Path, only: list[str] | N
                 code, results = product("daemon", "--once")
                 result = next((item for item in results or [] if item.get("issue") == number), {}) \
                     if isinstance(results, list) else {}
-                graded = grade_case(product, case, url, repository, temp, solved, result)
+                graded = grade_case(product, case, url, repository, temp, solved, result, target)
                 graded["baseline_acceptance"] = before
                 report["cases"].append(graded)
                 json_file(artifact / "report.json", report)

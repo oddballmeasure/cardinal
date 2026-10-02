@@ -6,3 +6,4 @@ src/*.egg-info/
 artifacts/
 /.env
 /tests/blank_repo/
+/tests/self_repo/

@@ -1,0 +1,6 @@
+{
+  "repository": "oddballmeasure/cardinal_self_test_repo",
+  "number": 0,
+  "title": "Query stored log records",
+  "body": "Agents need to read Cardinal's logs without opening the database. Add `cardinal logs query`.\n\n- R1: Prints one JSON line per stored record, oldest first, shaped `{\"seq\": <int>, \"record\": <LogRecord>}`, where `seq` is the record's position in the store and `record` matches `cardinal logs schema`.\n- R2: `--level L` keeps records at L or more severe (debug < info < warning < error < critical); `--repo owner/name` keeps records whose `source.repo` matches; `--fingerprint F` keeps records with that fingerprint. Filters combine.\n- R3: `--after-seq N` keeps records with `seq` greater than N; `--limit K` prints at most K lines, the oldest K that match.\n- R4: An unknown `--level` exits 2 with a JSON error on stderr and prints nothing on stdout.\n\nAdd end-to-end tests that drive the CLI."
+}

@@ -3,6 +3,7 @@
   offline --scenario NAME              single | daemon | ci-failure | deploy | cleaner | monitor, all without network
   live --suite PATH --model SPEC       the product's daemon against the live GitHub test repository
   propagate --model SPEC              an app error in the live test repo becomes an issue Cardinal fixes
+  self-seed [--reseed]                 snapshot Cardinal into the self-test repository and file its issues
   clean --manifest PATH [--model SPEC] restore the live test repository from a pinned manifest
 Every command writes artifacts/e2e/<run-id>/report.json with a rerun command, and exits nonzero
 unless every check passed.
@@ -31,6 +32,8 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--only", nargs="*", help="case keys to run, in suite order")
     propagate = sub.add_parser("propagate")
     propagate.add_argument("--model", required=True)
+    self_seed = sub.add_parser("self-seed")
+    self_seed.add_argument("--reseed", action="store_true", help="replace an already seeded main, under a lease")
     clean = sub.add_parser("clean")
     clean.add_argument("--manifest", type=Path, required=True)
     clean.add_argument("--model", required=True)
@@ -47,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "live":
         from cardinal_harness import live as suite
         report = suite.run_suite(args.suite, args.model, artifact, args.only)
+    elif args.command == "self-seed":
+        from cardinal_harness import self_seed
+        try:
+            report = self_seed.seed(args.reseed, artifact)
+        except Exception as exc:  # noqa: BLE001 - recorded in the report, which the exit code reflects
+            report = {"passed": False, "error": f"{type(exc).__name__}: {exc}"}
     elif args.command == "propagate":
         from cardinal_harness import live_monitor
         report = live_monitor.run_exclusive(args.model, artifact)

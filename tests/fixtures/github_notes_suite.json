@@ -2,6 +2,11 @@
   "repository": "oddballmeasure/cardinal_test_repo",
   "baseline_sha": "65637e2a013d5bed9200c7d3ea6f70da3d6c2372",
   "ready_label": "cardinal:ready",
+  "checkout": "tests/blank_repo",
+  "test_command": ["{python}", "-m", "pytest", "-q", "tests"],
+  "required_check": "http-e2e",
+  "deploy": "local",
+  "paths_off_limits": [".github/"],
   "cases": [
     {
       "key": "easy",

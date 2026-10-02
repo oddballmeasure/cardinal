@@ -1,0 +1,6 @@
+{
+  "repository": "oddballmeasure/cardinal_self_test_repo",
+  "number": 0,
+  "title": "Prune old log records",
+  "body": "Logs grow without limit. Add `cardinal logs prune --days N` to remove old records.\n\n- R1: Deletes `$CARDINAL_HOME/logs/YYYY-MM-DD.jsonl` files dated more than N days before today (UTC); files for today and the previous N days are kept.\n- R2: Deletes rows in the `logs` table of `$CARDINAL_HOME/store.db` whose `at` is older than the same cutoff; newer rows are kept.\n- R3: Prints `{\"files_removed\": <int>, \"records_removed\": <int>}` on stdout and exits 0. `--days` below 1 exits 2 with a JSON error on stderr and deletes nothing.\n\nAdd end-to-end tests that drive the CLI."
+}

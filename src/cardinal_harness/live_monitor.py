@@ -21,8 +21,8 @@ import uuid
 from pathlib import Path
 
 from cardinal_harness.github_setup import load_model_key, prepare_test_repo, use_github_cli_git_credentials, wait_baseline_ci
-from cardinal_harness.live import (CHECK, ROLES, acceptance, cleanup, environment_preflight, exclusive, fresh_clone,
-                                   gh, gh_json, grade_case, park_ready, remote_main, wait_ready)
+from cardinal_harness.live import (NOTES_SUITE, ROLES, Target, acceptance, cleanup, environment_preflight, exclusive,
+                                   fresh_clone, gh, gh_json, grade_case, park_ready, remote_main, wait_ready)
 from cardinal_harness.product import FIXTURES, ROOT, Product, json_file, product_env, write_config
 
 TOKEN = uuid.uuid4().hex
@@ -90,6 +90,7 @@ def close_stale(repository: str, note: str) -> list[int]:
 
 def run(model: str, artifact: Path) -> dict:
     case = json.loads((FIXTURES / "monitor_case.json").read_text())
+    target = Target.of(json.loads(NOTES_SUITE.read_text()))
     repository, url = case["repository"], f"https://github.com/{case['repository']}"
     report: dict = {"case": case["key"], "model": model, "checks": {}, "passed": False}
     checks = report["checks"]
@@ -106,13 +107,13 @@ def run(model: str, artifact: Path) -> dict:
         try:
             load_model_key()
             use_github_cli_git_credentials()
-            report["test_repo_preflight"] = prepare_test_repo(url, ROOT / "tests" / "blank_repo")
+            report["test_repo_preflight"] = prepare_test_repo(url, target.checkout)
             baseline = remote_main(url)
             report["baseline_sha"] = baseline
             if case["baseline_sha"] != baseline:
                 raise ValueError(f"Remote main {baseline} differs from the pinned baseline {case['baseline_sha']}")
-            wait_baseline_ci(repository, baseline, artifact)
-            preflight = environment_preflight(url, temp)
+            wait_baseline_ci(repository, baseline, artifact, target.check)
+            preflight = environment_preflight(url, temp, target)
             report["environment_preflight"] = preflight
             if preflight["exit_code"] != 0:
                 raise ValueError("The test repository's own suite fails at the baseline on this machine")
@@ -127,8 +128,8 @@ def run(model: str, artifact: Path) -> dict:
 
             home = temp / "home"
             write_config(home, models={role: model for role in ROLES}, slug=repository, remote_url=url,
-                         test_command=[sys.executable, "-m", "pytest", "-q", "tests"], required_checks=[CHECK],
-                         paths_off_limits=[".github/"], deploy="local",
+                         test_command=target.test_command, required_checks=[target.check],
+                         paths_off_limits=target.paths_off_limits, deploy=target.deploy,
                          sections={"ingest": {"bind": "127.0.0.1:0", "token_env": "CARDINAL_INGEST_TOKEN"},
                                    "monitor": {"min_occurrences": case["requests"], "window_hours": 1,
                                                "max_issues_per_pass": 3}})
@@ -165,7 +166,7 @@ def run(model: str, artifact: Path) -> dict:
             wait_ready(repository, READY, [filed])
             code, runs = product("daemon", "--once")
             result = next((item for item in runs or [] if item.get("issue") == filed), {}) if isinstance(runs, list) else {}
-            graded = grade_case(product, {**case, "issue": {"number": filed}}, url, repository, temp, [], result)
+            graded = grade_case(product, {**case, "issue": {"number": filed}}, url, repository, temp, [], result, target)
             for name, item in graded["checks"].items():
                 expect(name, item["ok"], item["detail"])
             report["usage"] = graded["usage"]
