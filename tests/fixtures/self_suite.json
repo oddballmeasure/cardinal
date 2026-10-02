@@ -1,6 +1,6 @@
 {
   "repository": "oddballmeasure/cardinal_self_test_repo",
-  "baseline_sha": "PENDING",
+  "baseline_sha": "3290aaf1b35ba068a1230d029dcb97390e450bf4",
   "ready_label": "cardinal:ready",
   "checkout": "tests/self_repo",
   "test_command": ["uv", "run", "--locked", "python", "-m", "pytest", "-q"],

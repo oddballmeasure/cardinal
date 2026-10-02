@@ -58,6 +58,13 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [ ] Add `oddballmeasure/cardinal` under `[[repos]]` so Cardinal's own findings can be triaged and fixed
 - [ ] Investigation agent for `cardinal:investigate`; log retention
 
+## Phase 9 — Cardinal working on itself
+- [x] `self-seed`: snapshot of Cardinal (minus tests/acceptance/self) in oddballmeasure/cardinal_self_test_repo, checkout tests/self_repo, baseline 3290aaf with green offline-e2e
+- [x] Issues #1 (logs prune, easy) and #2 (logs query, medium); hidden tests fail 7/7 at baseline, pass 7/7 against a throwaway implementation
+- [x] Live suite reads its target from the suite file; `live --suite tests/fixtures/self_suite.json`
+- [ ] Live self suite passing
+- [ ] Smoke the notes suite after the live.py refactor (`live --only easy`)
+
 ## Discovered along the way
 - [x] Killed daemon left its test process group (and hung docker helpers) running: run_repo_tests now kills its group on any interruption; SIGTERM unwinds and settles the run as interrupted
 - [x] Live grader crashed querying checks for an unpushed commit, and ran Docker acceptance for runs that never merged: both fixed
