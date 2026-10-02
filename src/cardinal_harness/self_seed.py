@@ -3,7 +3,8 @@ origin, with the self suite's issues filed and labelled ready.
 
 The snapshot leaves out tests/acceptance/self, the oracle that grades the issues
 (lessons/product-never-sees-the-oracle.md), and adds a CI workflow that runs the snapshot's own
-offline suite. A seeded origin is replaced only with --reseed, under an exact lease.
+offline suite. A seeded origin changes only with --reseed, which adds the new snapshot as a
+fast-forward commit: no force push, and the workflow file is untouched unless its template changed.
 """
 
 import json
@@ -64,11 +65,17 @@ def checkout(url: str, path: Path) -> Path:
     return path
 
 
-def snapshot(repo: Path) -> str:
-    """Replace the checkout's files with HEAD of this checkout, minus the oracle, as one commit."""
+def snapshot(repo: Path, previous: str | None) -> str:
+    """Replace the checkout's files with HEAD of this checkout, minus the oracle, as one commit on
+    top of the seeded main (or as the first commit of an empty repository)."""
     if git(ROOT, "status", "--porcelain", "--untracked-files=no"):
         raise ValueError("Commit Cardinal's tracked changes first; the snapshot is taken from HEAD")
     source = git(ROOT, "rev-parse", "HEAD")
+    if previous:  # position main at the seeded head while the tree is still clean
+        git(repo, "fetch", "-q", "origin")
+        git(repo, "checkout", "-q", "-B", "main", previous)
+    else:
+        git(repo, "checkout", "-q", "--orphan", "main")
     for entry in repo.iterdir():
         if entry.name != ".git":
             shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
@@ -78,12 +85,10 @@ def snapshot(repo: Path) -> str:
     workflow = repo / ".github" / "workflows" / "offline-e2e.yml"
     workflow.parent.mkdir(parents=True, exist_ok=True)
     workflow.write_text(WORKFLOW)
-    git(repo, "checkout", "-q", "--orphan", "seed")
     git(repo, "add", "-A")
     if any(path.startswith(ORACLE) for path in git(repo, "ls-files").splitlines()):
         raise ValueError(f"{ORACLE} reached the snapshot")
     git(repo, "commit", "-q", "-m", f"Cardinal baseline {source[:12]}")
-    git(repo, "branch", "-M", "main")
     return source
 
 
@@ -120,15 +125,14 @@ def seed(reseed: bool, artifact: Path) -> dict:
         previous = None
     if previous and not reseed:
         raise ValueError(f"{repository} is already seeded at {previous}; pass --reseed to replace it")
-    source = snapshot(repo)
+    source = snapshot(repo, previous)
     preflight = subprocess.run(target.test_command, cwd=repo, env=product_env({}), text=True, capture_output=True,
                                check=False, timeout=1500)
     report: dict = {"repository": repository, "source_sha": source, "previous_sha": previous,
                     "snapshot_suite": {"exit_code": preflight.returncode, "stdout": preflight.stdout[-2000:]}}
     if preflight.returncode != 0:
         raise ValueError(f"The snapshot's own suite fails before pushing: {preflight.stdout[-1500:]}")
-    lease = [f"--force-with-lease=refs/heads/main:{previous}"] if previous else []
-    git(repo, "push", "-q", *lease, "origin", "main:refs/heads/main")
+    git(repo, "push", "-q", "origin", "main:refs/heads/main")  # fast-forward only; refused if main moved
     git(repo, "fetch", "-q", "origin")
     git(repo, "branch", "-q", "-u", "origin/main")
     baseline = git(repo, "rev-parse", "HEAD")

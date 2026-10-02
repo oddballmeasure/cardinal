@@ -9,6 +9,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -49,6 +50,20 @@ def write_config(home: Path, *, models: dict[str, str], slug: str, remote_url: s
     return path
 
 
+def run_bounded(command: list[str], timeout: float, **kwargs) -> subprocess.CompletedProcess:
+    """subprocess.run with a timeout that holds: on expiry the whole process group is killed. A plain
+    timeout kills only the child, then waits forever on pipes a grandchild still holds open."""
+    process = subprocess.Popen(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               start_new_session=True, **kwargs)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        stderr += f"\nkilled with its process group after {timeout}s"
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
 class Product:
     """Runs `cardinal` with a fixed home and environment, keeping every invocation's output."""
 
@@ -59,7 +74,7 @@ class Product:
     def __call__(self, *args: str, timeout: int = 7200) -> tuple[int, object]:
         command = [sys.executable, "-m", "cardinal.cli.main", "--home", str(self.home), "-v", *args]
         started = time.monotonic()
-        result = subprocess.run(command, env=self.env, text=True, capture_output=True, timeout=timeout, check=False)
+        result = run_bounded(command, timeout, env=self.env)
         index = len(self.invocations) + 1
         log = self.artifact / "product" / f"{index:02d}-{args[0]}.log"
         log.parent.mkdir(parents=True, exist_ok=True)

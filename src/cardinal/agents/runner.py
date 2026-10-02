@@ -74,6 +74,9 @@ def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_t
         memory=["/skills/CONVENTIONS.md"],
         tools=call.tools,
         response_format=ToolStrategy(call.schema) if call.schema else None,
+        # Never inherit the run's checkpointer: nothing resumes mid-agent, and a nested graph that
+        # checkpoints every step deadlocks LangGraph's writer pool on small machines (2 vCPU CI).
+        checkpointer=False,
     )
     started, clock = now(), time.monotonic()
     state: dict = {"messages": []}

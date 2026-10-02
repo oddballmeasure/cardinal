@@ -8,18 +8,19 @@ independent acceptance tests. Rerun any scenario with the report's `rerun_comman
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from cardinal_harness.product import run_bounded
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def harness(*args: str, timeout: int) -> dict:
-    process = subprocess.run([sys.executable, "-m", "cardinal_harness", *args], cwd=ROOT, text=True,
-                             capture_output=True, check=False, timeout=timeout)
+    process = run_bounded([sys.executable, "-m", "cardinal_harness", *args], timeout, cwd=ROOT)
+    assert process.returncode >= 0, f"harness {args} was killed after {timeout}s: {process.stderr[-3000:]}"
     summary = json.loads(process.stdout.strip().splitlines()[-1])
     artifact = Path(summary["artifact"])
     report = json.loads((artifact / "report.json").read_text())
