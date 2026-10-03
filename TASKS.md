@@ -62,9 +62,11 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [x] `self-seed`: snapshot of Cardinal (minus tests/acceptance/self) in oddballmeasure/cardinal_self_test_repo, checkout tests/self_repo, baseline 3290aaf with green offline-e2e
 - [x] Issues #1 (logs prune, easy) and #2 (logs query, medium); hidden tests fail 7/7 at baseline, pass 7/7 against a throwaway implementation
 - [x] Live suite reads its target from the suite file; `live --suite tests/fixtures/self_suite.json`
-- [ ] Live self suite passing. Run 9f95ad33: prune (#1) paused for approval as designed, harness approved, Cardinal coded and verified it, but offline-e2e failed on its new test (2 of 3 old records pruned on the runner; likely SQLite date() parsing differs by version). Query (#2) not reached
+- [x] Live self suite passing: run 6b0fe756, both cases 6/6 (PRs #5, #6), final acceptance 3/3 and 4/4, cleanup clean; 1.86M input / 45k output tokens for the run
+- [x] (earlier) Live self suite run 9f95ad33: prune (#1) paused for approval as designed, harness approved, Cardinal coded and verified it, but offline-e2e failed on its new test (2 of 3 old records pruned on the runner; likely SQLite date() parsing differs by version). Query (#2) not reached
 - [x] Live self suite, query (#2) alone: run caf2debf passed 6/6, PR #4 merged with green offline-e2e, hidden acceptance 4/4, cleanup clean (1.36M input tokens, 43 agent calls, ~17 min agent time)
-- [ ] Cardinal has no repair loop for a failed required check: ci_failed ends the run instead of sending the CI log back to the coder
+- [x] CI repair loop: a failed required check's log goes back to the coder (ci_repair_rounds, default 1); offline ci-repair scenario
+- [ ] CI repair loop exercised on live CI (run 6b0fe756 passed CI first time, so the loop did not fire)
 - [ ] Smoke the notes suite after the live.py refactor (`live --only easy`)
 
 ## Discovered along the way
