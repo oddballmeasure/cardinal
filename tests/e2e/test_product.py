@@ -49,6 +49,12 @@ def test_failed_ci_leaves_pr_open_and_main_untouched():
     harness("offline", "--scenario", "ci-failure", timeout=900)
 
 
+def test_ci_failure_log_goes_back_to_the_coder_and_the_repaired_head_merges():
+    """CI fails on the first pushed head; the coder gets the job log, the verifier rechecks, and the
+    same PR merges the repaired head once CI passes on it."""
+    harness("offline", "--scenario", "ci-repair", timeout=900)
+
+
 def test_deploy_layouts_and_failures_after_a_real_merge():
     """A root-level deploy pair deploys; a failing script, health that never matches, and an
     ambiguous layout each fail the run after the merge without recording a deployed revision."""

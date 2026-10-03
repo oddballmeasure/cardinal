@@ -201,6 +201,8 @@ def writes_for(ticket_id: str) -> dict[str, str]:
             "    result = subprocess.run([sys.executable, '-m', 'ledger', '--input', 'data/transactions.json'],\n"
             "                            text=True, capture_output=True, check=True)\n"
             "    assert len(json.loads(result.stdout)) == 3\n")}
+    if ticket_id.startswith("CI-REPAIR-"):
+        return {"tests/test_ci_repair.py": "def test_ci_environment_fix_is_covered():\n    assert True\n"}
     if ticket_id == "TOTAL":
         return {"tests/test_total.py": "def test_total_flag_is_printed():\n    assert False, 'total flag missing'\n"}
     raise ValueError(f"No replay candidate for ticket {ticket_id}")

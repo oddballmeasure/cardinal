@@ -27,6 +27,21 @@ def repair_ticket(decision: IntakeDecision, tickets: list[Ticket], findings: lis
     )
 
 
+def ci_repair_ticket(decision: IntakeDecision, tickets: list[Ticket], logs: list[str], round_number: int) -> Ticket:
+    targets = sorted({path for ticket in tickets for path in ticket.target_files})
+    return Ticket(
+        id=f"CI-REPAIR-{round_number}", source_issue=decision.issue_number,
+        title="Make the required CI checks pass",
+        task=("The branch passed the repository's test command here, but a required CI check failed on the "
+              "pushed commit. CI runs in a different environment (often Linux, a different Python build, "
+              "a different clock or timezone), so look for code or tests that depend on the machine. "
+              "Fix the cause shown in the log; do not weaken or skip the failing test.\n\n" + "\n\n".join(logs)),
+        acceptance_criteria=["The failure shown in the CI log is fixed at its cause",
+                             "The repository's test command passes"],
+        covers=[item.id for item in decision.requirements], depends_on=[], target_files=targets,
+    )
+
+
 def fresh_base(run: Run, base_sha: str) -> str:
     """With nothing accepted yet, restart from the newest base so merges since profiling are included."""
     if ticket_commits(run.worktree, base_sha):
@@ -38,12 +53,12 @@ def fresh_base(run: Run, base_sha: str) -> str:
 
 
 def implement(run: Run, decision: IntakeDecision, tickets: list[Ticket], base_sha: str,
-              repair: list[str] | None, round_number: int) -> tuple[str, dict]:
+              repair: Ticket | None) -> tuple[str, dict]:
     """Returns the branch head and the test evidence observed at exactly that head."""
     done = ticket_commits(run.worktree, base_sha)
     work = [ticket for ticket in tickets if ticket.id not in done]
     if repair:
-        work.append(repair_ticket(decision, tickets, repair, round_number))
+        work.append(repair)
     evidence: CommandEvidence | None = None
     for ticket in work:
         evidence = implement_ticket(run, decision, ticket)

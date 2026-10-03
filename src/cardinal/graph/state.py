@@ -13,6 +13,8 @@ class RunState(TypedDict, total=False):
     question: str                 # what the orchestrator asked a person
     human_answer: str | None
     repair: list[str] | None      # verifier findings to resolve in the next implement round
+    ci_repair: list[str] | None   # failed required-check logs to resolve in the next implement round
+    ci_round: int                 # CI repair rounds used so far
     verify_round: int
     head_sha: str
     head_tests: dict              # CommandEvidence observed at head_sha

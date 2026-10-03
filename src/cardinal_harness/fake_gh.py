@@ -7,7 +7,9 @@ Branch heads are read from the bare remote on every call, as GitHub would report
 
 State lives in the JSON file named by CARDINAL_FAKE_GH_STATE:
   repository, bare, issues{number: {...}}, labels[], prs[], next_pr,
-  ci{"script": ["pending", "success"], "check": "name"}, check_calls{sha: n},
+  ci{"script": ["pending", "success"], "check": "name", "scripts": [[...], ...], "log": "..."},
+  check_calls{sha: n}. With "scripts", the Nth distinct head checked follows the Nth script (the last
+  repeats), so a repaired head can pass where the first failed. "log" is every failed job's log.
   other_repos{slug: {issues, labels}}: further repositories that hold only issues and labels
 """
 
@@ -127,11 +129,19 @@ def pulls(state: dict, args: list[str]):
 def api(state: dict, args: list[str]):
     path = args[0].split("?")[0]
     parts = path.split("/")
+    if len(parts) == 7 and parts[0] == "repos" and parts[3] == "actions" and parts[4] == "jobs" and parts[6] == "logs":
+        if "--allow-escape-sequences" not in args:  # real gh refuses to print a log's escape codes without it
+            raise SystemExit("the response contains terminal escape sequences; pass --allow-escape-sequences")
+        return state["ci"].get("log", "2026-01-01T00:00:00.0000000Z \x1b[31mFAILED\x1b[0m tests/test_cli.py::test_ci_only")
     if len(parts) == 6 and parts[0] == "repos" and parts[3] == "commits" and parts[5] == "check-runs":
         sha = parts[4]
         calls = state["check_calls"].get(sha, 0)
         state["check_calls"][sha] = calls + 1
-        script = state["ci"]["script"]
+        heads = state["ci"].setdefault("heads", [])
+        if sha not in heads:
+            heads.append(sha)
+        scripts = state["ci"].get("scripts") or [state["ci"]["script"]]
+        script = scripts[min(heads.index(sha), len(scripts) - 1)]
         outcome = script[min(calls, len(script) - 1)]
         if outcome == "missing":
             return {"total_count": 0, "check_runs": []}

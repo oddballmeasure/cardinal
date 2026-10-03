@@ -36,6 +36,7 @@ max_issues_per_pass = 3    # stops an error storm from filing a flood of issues
 recursion_limit = 250
 coder_attempts = 3
 verify_rounds = 2
+ci_repair_rounds = 1        # coder rounds that get a failed required check's log before the run fails
 test_timeout_seconds = 1500
 ci_timeout_seconds = 2400
 ci_poll_seconds = 15

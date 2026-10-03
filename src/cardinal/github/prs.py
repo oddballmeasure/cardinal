@@ -3,6 +3,7 @@ whether to reuse or create, and when to merge. Tool misuse returns an error the 
 is recorded as a violation the runtime rejects afterwards."""
 
 import json
+import re
 import time
 from pathlib import Path
 
@@ -33,6 +34,33 @@ def check_state(repo: str, sha: str, required: list[str]) -> str:
     if "failure" in states:
         return "failure"
     return "pending" if "pending" in states else "success"
+
+
+LOG_TAIL = 8000
+STAMP = re.compile(r"^\S+Z ", re.MULTILINE)
+ESCAPES = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def failure_log(repo: str, sha: str, required: list[str]) -> str:
+    """The tail of each failed required check's log on one commit, as plain text a coder can read.
+    For GitHub Actions a check run's id is its job id; other checks only offer their summary."""
+    runs = gh_json("api", f"repos/{repo}/commits/{sha}/check-runs?per_page=100")["check_runs"]
+    parts = []
+    for name in required:
+        matching = [run for run in runs if run["name"] == name and run["head_sha"] == sha]
+        if not matching:
+            continue
+        latest = max(matching, key=lambda run: run["id"])
+        if latest["conclusion"] in {"success", "skipped", "neutral"}:
+            continue
+        try:
+            text = gh("api", f"repos/{repo}/actions/jobs/{latest['id']}/logs", "--allow-escape-sequences", timeout=120)
+        except GhError:
+            output = latest.get("output") or {}
+            text = "\n".join(filter(None, [output.get("summary"), output.get("text")])) or "(no log available)"
+        text = ESCAPES.sub("", STAMP.sub("", text))
+        parts.append(f"Check `{name}` concluded {latest['conclusion']} on {sha[:12]}. Log tail:\n{text[-LOG_TAIL:]}")
+    return "\n\n".join(parts) or f"Required checks {required} failed on {sha[:12]}; no log was available."
 
 
 class PRService:

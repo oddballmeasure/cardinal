@@ -202,6 +202,43 @@ def ci_failure(temp: Path, artifact: Path) -> dict:
            and any("ci_failed" in comment for comment in issue["comments"]), issue)
     run = product.status(104)[-1]
     expect(checks, "nothing was deployed", run.get("deployed_sha") is None and run.get("merge_sha") is None, run.get("deployed_sha"))
+    repairs = [event["data"] for event in run["events"] if event["kind"] == "ci_repair"]
+    coders = [call for call in run["agent_calls"] if call["stage"] == "coder" and call["ticket_id"] == "CI-REPAIR-1"]
+    expect(checks, "one CI repair round got the failed job's log, then the run gave up",
+           len(repairs) == 1 and "FAILED tests/test_cli.py::test_ci_only" in repairs[0]["log"]
+           and "\x1b" not in repairs[0]["log"] and len(coders) == 1 and len(state["ci"]["heads"]) == 2,
+           {"repairs": repairs, "heads": state["ci"].get("heads")})
+    product.keep_store()
+    json_file(artifact / "github_state.json", state)
+    return {"checks": checks, "invocations": product.invocations}
+
+
+def ci_repair(temp: Path, artifact: Path) -> dict:
+    """The first pushed head fails CI; the coder gets the log, the repaired head passes and merges."""
+    bare, state_path, _ = world(temp, ready=[104], ci=["pending", "failure"])
+    state = json.loads(state_path.read_text())
+    state["ci"]["scripts"] = [["pending", "failure"], ["pending", "success"]]
+    state["ci"]["log"] = "2026-01-01T00:00:00.0000000Z FAILED tests/test_cli.py::test_runner_timezone - assert 2 == 3"
+    json_file(state_path, state)
+    product = configure(temp, bare, state_path, artifact)
+    checks: dict = {}
+    code, result = product("run", "104")
+    expect(checks, "cardinal run exits 0 after one CI repair", code == 0, result)
+    state = json.loads(state_path.read_text())
+    run = product.status(104)[-1]
+    tickets = json.loads((product.home / "runs" / run["run_id"] / "context" / "ticket.json").read_text())
+    expect(checks, "the repair ticket carries the CI log, without timestamps",
+           tickets["id"] == "CI-REPAIR-1" and "FAILED tests/test_cli.py::test_runner_timezone" in tickets["task"]
+           and "2026-01-01T00:00:00" not in tickets["task"], tickets.get("task", "")[-600:])
+    heads = state["ci"]["heads"]
+    pr = state["prs"][0] if state["prs"] else {}
+    expect(checks, "the same PR merged the repaired head, which CI passed",
+           len(state["prs"]) == 1 and pr.get("state") == "MERGED" and len(heads) == 2
+           and pr.get("headRefOid") == heads[1] == run["head_sha"], {"heads": heads, "pr": pr})
+    verdicts = [event for event in run["events"] if event["kind"] == "verdict"]
+    expect(checks, "the verifier checked the repaired head again", len(verdicts) == 2, len(verdicts))
+    after = acceptance(bare, temp / "after", 104)
+    expect(checks, "acceptance passes on the new main", after["exit_code"] == 0, after)
     product.keep_store()
     json_file(artifact / "github_state.json", state)
     return {"checks": checks, "invocations": product.invocations}
@@ -257,7 +294,7 @@ def monitor(temp: Path, artifact: Path) -> dict:
     return scenario(temp, artifact)
 
 
-SCENARIOS = {"single": single, "daemon": daemon, "ci-failure": ci_failure, "deploy": deploy,
+SCENARIOS = {"single": single, "daemon": daemon, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
              "cleaner": cleaner, "monitor": monitor}
 
 

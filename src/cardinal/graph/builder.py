@@ -1,4 +1,6 @@
-"""profile → intake → [human ↺ intake] → implement ⇄ verify → publish → pr → [deploy] → done"""
+"""profile → intake → [human ↺ intake] → implement ⇄ verify → publish → pr → [deploy] → done
+
+A required check that fails sends its log from pr back to implement, up to ci_repair_rounds times."""
 
 from functools import partial
 
@@ -33,6 +35,8 @@ def after_verify(state: RunState) -> str:
 def after_pr(run: Run, state: RunState) -> str:
     if failed(state):
         return END
+    if state.get("ci_repair"):
+        return "implement"
     return "deploy" if run.repo.deploy else "done"
 
 

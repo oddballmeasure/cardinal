@@ -103,7 +103,8 @@ def triage(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, numbe
 
 
 def drive(run: Run, thread_id: str, payload) -> dict:
-    config = {"configurable": {"thread_id": thread_id}}
+    # Each verify and CI repair round revisits nodes; LangGraph's default of 25 steps is too tight.
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
     with bind(run_id=run.run_id, issue=run.issue.number):
         return _drive(run, config, payload)
 

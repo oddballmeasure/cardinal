@@ -15,6 +15,7 @@ from cardinal.contracts.evidence import CommandEvidence
 from cardinal.contracts.intake import IntakeDecision, Ticket
 from cardinal.contracts.verdict import Verdict
 from cardinal.github.gh import GhError
+from cardinal.github.prs import failure_log
 from cardinal.graph import runtime
 from cardinal.graph.context import Run
 from cardinal.graph.failures import FailureKind, StageFailure
@@ -93,9 +94,14 @@ def implement_node(state: RunState, run: Run) -> dict:
     decision = IntakeDecision.model_validate(state["decision"])
     tickets = [Ticket.model_validate(item) for item in state["tickets"]]
     base_sha = runtime.fresh_base(run, state["base_sha"])
-    head_sha, tests = runtime.implement(run, decision, tickets, base_sha, state.get("repair"), state.get("verify_round", 1))
+    repair = None
+    if state.get("ci_repair"):
+        repair = runtime.ci_repair_ticket(decision, tickets, state["ci_repair"], state["ci_round"])
+    elif state.get("repair"):
+        repair = runtime.repair_ticket(decision, tickets, state["repair"], state.get("verify_round", 1))
+    head_sha, tests = runtime.implement(run, decision, tickets, base_sha, repair)
     runs.update(run.db, run.run_id, head_sha=head_sha)
-    return {"base_sha": base_sha, "head_sha": head_sha, "head_tests": tests, "repair": None}
+    return {"base_sha": base_sha, "head_sha": head_sha, "head_tests": tests, "repair": None, "ci_repair": None}
 
 
 @guarded("verify")
@@ -124,7 +130,16 @@ def publish_node(state: RunState, run: Run) -> dict:
 
 @guarded("pr")
 def pr_node(state: RunState, run: Run) -> dict:
-    result = pr_manager.land(run, Verdict.model_validate(state["verdict"]))
+    try:
+        result = pr_manager.land(run, Verdict.model_validate(state["verdict"]))
+    except pr_manager.CIFailed as exc:
+        used = state.get("ci_round", 0)
+        if used >= run.config.limits.ci_repair_rounds:
+            raise
+        log = failure_log(run.repo.slug, exc.head_sha, run.repo.required_checks)
+        run.recorder.event("pr", "ci_repair", {"round": used + 1, "head_sha": exc.head_sha, "log": log[-2000:]})
+        # Back to the coder with the log; the verifier then gets its full rounds on the repaired head.
+        return {"ci_repair": [log], "ci_round": used + 1, "verify_round": 1}
     runs.update(run.db, run.run_id, pr_number=result.number, pr_url=result.url, merge_sha=result.merge_sha)
     return {"pr": result.model_dump(), "merge_sha": result.merge_sha}
 
