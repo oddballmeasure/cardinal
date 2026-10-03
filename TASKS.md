@@ -62,7 +62,8 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [x] `self-seed`: snapshot of Cardinal (minus tests/acceptance/self) in oddballmeasure/cardinal_self_test_repo, checkout tests/self_repo, baseline 3290aaf with green offline-e2e
 - [x] Issues #1 (logs prune, easy) and #2 (logs query, medium); hidden tests fail 7/7 at baseline, pass 7/7 against a throwaway implementation
 - [x] Live suite reads its target from the suite file; `live --suite tests/fixtures/self_suite.json`
-- [ ] Live self suite passing
+- [ ] Live self suite passing. Run 9f95ad33: prune (#1) paused for approval as designed, harness approved, Cardinal coded and verified it, but offline-e2e failed on its new test (2 of 3 old records pruned on the runner; likely SQLite date() parsing differs by version). Query (#2) not reached
+- [ ] Cardinal has no repair loop for a failed required check: ci_failed ends the run instead of sending the CI log back to the coder
 - [ ] Smoke the notes suite after the live.py refactor (`live --only easy`)
 
 ## Discovered along the way
