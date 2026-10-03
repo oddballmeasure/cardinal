@@ -220,8 +220,14 @@ def run_locked(suite_path: Path, model: str, artifact: Path, only: list[str] | N
                 code, results = product("daemon", "--once")
                 result = next((item for item in results or [] if item.get("issue") == number), {}) \
                     if isinstance(results, list) else {}
+                answered = None
+                if result.get("status") == "awaiting_human" and case.get("approve"):
+                    # The suite stands in for the operator on a case whose pause is expected.
+                    code, resumed = product("resume", str(number), "--approve", "--note", case["approve"])
+                    result, answered = (resumed if isinstance(resumed, dict) else {}), case["approve"]
                 graded = grade_case(product, case, url, repository, temp, solved, result, target)
                 graded["baseline_acceptance"] = before
+                graded["human_answer"] = answered
                 report["cases"].append(graded)
                 json_file(artifact / "report.json", report)
                 if not graded["passed"]:

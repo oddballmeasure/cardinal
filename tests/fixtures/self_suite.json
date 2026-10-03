@@ -12,6 +12,7 @@
       "key": "prune",
       "difficulty": "easy",
       "issue_fixture": "tests/fixtures/issue_self_prune.json",
+      "approve": "Approved: pruning Cardinal's own log files and log rows older than --days is intended.",
       "acceptance": "tests/acceptance/self/test_logs_prune.py",
       "requirement_ids": ["R1", "R2", "R3"],
       "acceptance_tests": {
