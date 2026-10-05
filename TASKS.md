@@ -72,8 +72,8 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 ## Discovered along the way
 - [x] Killed daemon left its test process group (and hung docker helpers) running: run_repo_tests now kills its group on any interruption; SIGTERM unwinds and settles the run as interrupted
 - [x] Live grader crashed querying checks for an unpushed commit, and ran Docker acceptance for runs that never merged: both fixed
-- [ ] Docker Desktop credential helper hangs on this host (lessons/docker-credential-helper-hang.md); live runs use a helper-free DOCKER_CONFIG until Monty restarts Docker Desktop
+- [x] Docker Desktop credential helper hangs on this host (lessons/docker-credential-helper-hang.md): Docker Desktop restarted 2026-10-05; `docker pull hello-world` and `docker-credential-desktop get` both return promptly with the default config
 - [ ] Verifier cannot tell an environment failure from a code failure; a repair round then chases the environment. Consider an environment-probe before blaming code
-- [ ] `AGENTS.md` doubles as agent memory and Claude instructions; the product now ships `skills/CONVENTIONS.md` instead — decide whether AGENTS.md should drop its agent-facing lines
+- [x] `AGENTS.md` dropped its agent-facing lines (the product ships `skills/CONVENTIONS.md`); it now points coding agents at `CLAUDE.md`
 - [ ] Live `test_command` runs the harness interpreter (it has pytest + Playwright); a real operator needs the repo to own its test environment
 - [ ] Product deploy for the notes repo only reports healthy through the harness's mock host; its committed health check needs a `ready` file that only the mock creates
