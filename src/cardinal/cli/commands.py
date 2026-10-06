@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sys
+from contextlib import closing
 
 from cardinal import app
 from cardinal.config.load import TEMPLATE, load
@@ -14,9 +15,10 @@ from cardinal.github.gh import GhError, gh, gh_json
 from cardinal.home import Home
 from cardinal.ingest import server
 from cardinal.logs import setup
-from cardinal.logs.record import LogRecord
+from cardinal.logs.record import LEVELS, LogRecord
 from cardinal.monitor import monitor
 from cardinal.repo.git import GitError, git
+from cardinal.store import logs as stored_logs
 from cardinal.store.db import connect
 
 log = logging.getLogger(__name__)
@@ -29,7 +31,9 @@ def dispatch(args):
     if args.command == "init":
         return init(home, args.repo)
     if args.command == "logs":
-        return LogRecord.model_json_schema()
+        if args.logs_command == "schema":
+            return LogRecord.model_json_schema()
+        return query_logs(home, args)
     config = load(home)
     db = connect(home.store)
     sink = setup.install(home, config, db)
@@ -66,6 +70,17 @@ def route(args, home: Home, config, db, sink):
             return print_and(results, 1 if failed else 0)
         loop.serve(home, config, repo, db, args.interval)
     raise ValueError(f"Unknown command {args.command}")
+
+
+def query_logs(home: Home, args) -> int:
+    if args.level is not None and args.level not in LEVELS:
+        raise ValueError(f"Unknown log level {args.level!r}; expected one of {', '.join(LEVELS)}")
+    if args.limit is not None and args.limit < 0:
+        raise ValueError("--limit must be non-negative")
+    with closing(connect(home.store)) as db:
+        for row in stored_logs.query(db, args.level, args.repo, args.fingerprint, args.after_seq, args.limit):
+            print(json.dumps({"seq": row["seq"], "record": json.loads(row["record"])}))
+    return 0
 
 
 def print_and(payload, code: int) -> int:

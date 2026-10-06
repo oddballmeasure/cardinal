@@ -49,6 +49,12 @@ def parser() -> argparse.ArgumentParser:
     logs = sub.add_parser("logs", help="Log record contract")
     logs_sub = logs.add_subparsers(dest="logs_command", required=True)
     logs_sub.add_parser("schema", help="Print the LogRecord JSON Schema other repositories write against")
+    query = logs_sub.add_parser("query", help="Stream stored LogRecords as JSON lines")
+    query.add_argument("--level", help="Minimum severity (debug, info, warning, error, critical)")
+    query.add_argument("--repo", help="Exact source repository owner/name")
+    query.add_argument("--fingerprint", help="Exact fingerprint")
+    query.add_argument("--after-seq", type=int, help="Only rows with a greater store sequence")
+    query.add_argument("--limit", type=int, help="Maximum number of oldest matching rows")
 
     sub.add_parser("ingest", help="Accept LogRecords from running apps over HTTP")
 
