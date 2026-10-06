@@ -55,7 +55,7 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [x] Example configs in `examples/` (cardinal.toml, app.env, log-record.json), checked by the offline monitor scenario
 - [x] Live propagation (`python -m cardinal_harness propagate`): run 69ff64f9 passed 13/13, issue #29 → PR #30 merged, cleanup clean
 - [x] Six-case live suite on baseline 65637e2: run 30d22d8e, 6/6 cases 6/6 checks, final acceptance green, cleanup clean (2.14M input tokens, ~34 min agent time)
-- [ ] Add `oddballmeasure/cardinal` under `[[repos]]` so Cardinal's own findings can be triaged and fixed
+- [x] Add `oddballmeasure/cardinal` under `[[repos]]` so Cardinal's own findings can be triaged and fixed: `~/.cardinal/cardinal.toml` gates merges on the new `offline-e2e` workflow (first run green, 2m38s); `repos check` all ok 2026-10-05
 - [ ] Investigation agent for `cardinal:investigate`; log retention
 
 ## Phase 9 — Cardinal working on itself
