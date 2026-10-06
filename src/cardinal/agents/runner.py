@@ -33,6 +33,7 @@ class AgentCall:
     worktree: Path | None = None
     repo_writable: bool = False
     off_limits: list[str] = field(default_factory=list)
+    hidden: list[str] = field(default_factory=list)
     tools: list = field(default_factory=list)
     schema: type | None = None
     ticket_id: str | None = None
@@ -69,7 +70,8 @@ def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_t
     model = resolve(call.model_spec, {**call.context, "stage": call.stage}, model_timeout)
     agent = create_deep_agent(
         model=model,
-        backend=mounts(call.worktree, call.context_dir, SKILLS, call.off_limits, repo_writable=call.repo_writable),
+        backend=mounts(call.worktree, call.context_dir, SKILLS, call.off_limits, call.hidden,
+                       repo_writable=call.repo_writable),
         skills=["/skills/"],
         memory=["/skills/CONVENTIONS.md"],
         tools=call.tools,

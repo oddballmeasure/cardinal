@@ -45,4 +45,5 @@ base_branch = "main"
 test_command = ["python", "-m", "pytest", "-q", "tests"]
 required_checks = []
 paths_off_limits = [".github/"]
+paths_hidden = []
 """

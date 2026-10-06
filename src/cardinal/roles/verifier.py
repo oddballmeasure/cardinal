@@ -4,6 +4,7 @@ import re
 
 from langchain_core.tools import tool
 
+from cardinal.agents.backends import under
 from cardinal.agents.runner import AgentCall, run_agent
 from cardinal.contracts.evidence import CommandEvidence
 from cardinal.contracts.intake import IntakeDecision
@@ -17,11 +18,6 @@ TEST_PATH = re.compile(r"(^|/)(tests?|e2e|__tests__|spec)/|(^|/)test_[^/]+$|_tes
 
 def is_test_path(path: str) -> bool:
     return bool(TEST_PATH.search(path))
-
-
-def off_limits(paths: list[str], prefixes: list[str]) -> list[str]:
-    cleaned = [item.strip("/") for item in prefixes if item.strip("/")]
-    return sorted(path for path in paths if any(path == prefix or path.startswith(prefix + "/") for prefix in cleaned))
 
 
 def verify(run: Run, decision: IntakeDecision, base_sha: str, head_evidence: CommandEvidence | None) -> Verdict:
@@ -42,7 +38,7 @@ def verify(run: Run, decision: IntakeDecision, base_sha: str, head_evidence: Com
     call = AgentCall(
         stage="verifier", model_spec=run.config.models.verifier, context_dir=run.context_dir,
         context=run.agent_context(head_sha=head_sha, requirement_ids=[item.id for item in decision.requirements]),
-        worktree=run.worktree, repo_writable=False,
+        worktree=run.worktree, repo_writable=False, hidden=run.repo.paths_hidden,
         prompt=("Use the verifier skill. Read /context/issue.json, /context/decision.json, /context/revision.json "
                 "and /context/patch.diff, and inspect the changed code and tests under /repo/ (read-only). "
                 "Return a VerifierAssessment for the full issue at the head_sha in revision.json."),
@@ -55,7 +51,7 @@ def verify(run: Run, decision: IntakeDecision, base_sha: str, head_evidence: Com
     if head_evidence is None:
         head_evidence = run_repo_tests(run.worktree, run.repo.test_command, limits.test_timeout_seconds)
     ids = {item.id for item in decision.requirements}
-    touched = off_limits(changed, run.repo.paths_off_limits)
+    touched = sorted(path for path in changed if under(path, run.repo.paths_off_limits + run.repo.paths_hidden))
     tests_changed = any(is_test_path(path) for path in changed)
     findings = list(assessment.findings)
     if not assessment.approved and not findings:

@@ -49,6 +49,7 @@ base_branch = "main"
 test_command = ["python", "-m", "pytest", "-q", "tests"]   # the only test oracle Cardinal uses
 required_checks = ["http-e2e"]                             # [] means merge without waiting for CI
 paths_off_limits = [".github/"]
+paths_hidden = []                                          # agents can neither see nor change these
 # retry_after_hours = 24   # requeue retryable failures after this long; omit to never retry
 
 # Deploy after merge with the repository's committed deploy/deploy.sh and deploy/deploy.json.
@@ -56,10 +57,12 @@ paths_off_limits = [".github/"]
 transport = "local"                  # local | ssh (ssh reads host and user from deploy.json)
 local_directory = "~/cardinal-deploys/notes"
 
-# Cardinal working on itself. Uncomment once you are ready for Cardinal to fix its own issues.
+# Cardinal working on itself. Its graders live in the repository, so agents must not see them.
 # [[repos]]
 # slug = "oddballmeasure/cardinal"
 # base_branch = "main"
 # test_command = ["uv", "run", "--locked", "python", "-m", "pytest", "-q"]
-# required_checks = []
-# paths_off_limits = [".github/", "tests/acceptance/", "src/cardinal_harness/"]
+# required_checks = ["offline-e2e"]
+# paths_off_limits = [".github/"]
+# paths_hidden = ["tests/acceptance/", "tests/fixtures/issue_self_prune.json",
+#                 "tests/fixtures/issue_self_query.json", "tests/fixtures/self_suite.json"]

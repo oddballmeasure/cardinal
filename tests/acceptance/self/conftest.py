@@ -36,6 +36,7 @@ base_branch = "main"
 test_command = ["true"]
 required_checks = []
 paths_off_limits = []
+paths_hidden = []
 
 [[repos]]
 slug = "example/other"
@@ -43,6 +44,7 @@ base_branch = "main"
 test_command = ["true"]
 required_checks = []
 paths_off_limits = []
+paths_hidden = []
 """
 
 

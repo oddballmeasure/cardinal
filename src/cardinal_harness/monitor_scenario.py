@@ -59,7 +59,7 @@ def configure(temp: Path, bare: Path, state_path: Path, artifact: Path) -> Produ
                            "monitor": {"min_occurrences": 3, "window_hours": 24, "max_issues_per_pass": 1}},
                  extra_repos=["", "[[repos]]", f"slug = {json.dumps(SELF)}", f"remote_url = {json.dumps(str(self_bare))}",
                               'base_branch = "main"', 'test_command = ["true"]', "required_checks = []",
-                              "paths_off_limits = []"])
+                              "paths_off_limits = []", "paths_hidden = []"])
     fake_bin = fake_gh.install(temp / "bin")
     env = product_env({"PATH": f"{fake_bin.parent}{os.pathsep}{os.environ['PATH']}",
                        "CARDINAL_FAKE_GH_STATE": str(state_path),

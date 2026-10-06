@@ -57,7 +57,7 @@ commented example.
 |---|---|---|
 | `[models]` | `orchestrator`, `profiler`, `coder`, `verifier`, `pr_manager`, `deployer`, `monitor` | Required, each `provider:model` (e.g. `openai:gpt-6-sol`). No role borrows another's |
 | `[logging]` | `level`, `source_repo` | Required. `source_repo` is where Cardinal files its own defects |
-| `[[repos]]` | `slug`, `base_branch`, `test_command`, `required_checks`, `paths_off_limits` | Required, one table per repository. `test_command` is an argv list (no shell) and is the only test oracle. `required_checks = []` merges without waiting for CI |
+| `[[repos]]` | `slug`, `base_branch`, `test_command`, `required_checks`, `paths_off_limits`, `paths_hidden` | Required, one table per repository. `test_command` is an argv list (no shell) and is the only test oracle. `required_checks = []` merges without waiting for CI. Agents cannot change `paths_off_limits`, and can neither see nor change `paths_hidden` (for example a grader kept in the repository) |
 | | `remote_url`, `branch_prefix`, `retry_after_hours` | Optional. Defaults: `https://github.com/<slug>`, `cardinal`, and no automatic retry (at least 24 when set) |
 | `[repos.labels]` | `ready`, `working`, `done`, `error`, `needs_human`, `investigate` | Optional renames of the `cardinal:*` labels |
 | `[repos.deploy]` | `transport`, `local_directory` | Optional. `local` or `ssh`; see Deployment |

@@ -31,6 +31,7 @@ def attempt(run: Run, decision: IntakeDecision, ticket: Ticket, number: int, fee
         stage="coder", model_spec=run.config.models.coder, context_dir=run.context_dir, ticket_id=ticket.id,
         context=run.agent_context(ticket=ticket.model_dump(), attempt=number, feedback=feedback),
         worktree=run.worktree, repo_writable=True, off_limits=run.repo.paths_off_limits,
+        hidden=run.repo.paths_hidden,
         prompt=(f"Use the coder skill to implement ticket {ticket.id} in /repo/. Read /context/ticket.json, "
                 "/context/issue.json and /context/requirements.json. Add tests to the repository that exercise "
                 "the new behavior through the application's boundary, then call run_repo_tests and fix failures "

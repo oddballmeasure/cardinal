@@ -75,6 +75,7 @@ def intake(run: Run, profile: RepoProfile, human_answer: str | None) -> tuple[In
     call = AgentCall(
         stage="orchestrator", model_spec=run.config.models.orchestrator, context_dir=run.context_dir,
         context=run.agent_context(human_answer=human_answer), worktree=run.worktree, repo_writable=False,
+        hidden=run.repo.paths_hidden,
         prompt=("Use the orchestrator skill. Read /context/issue.json and decide how Cardinal should handle it. "
                 "The repository is at /repo/ (read-only) and its profile at /context/repo_profile.json. "
                 "Return one IntakeDecision." + answer_note),

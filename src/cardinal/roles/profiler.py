@@ -9,6 +9,7 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+from cardinal.agents.backends import under
 from cardinal.agents.runner import AgentCall, run_agent
 from cardinal.contracts.profile import ProfileChunk, RepoProfile
 from cardinal.graph.context import Run
@@ -64,7 +65,7 @@ def read_bounded(repo: Path, path: str, start_line: int, max_lines: int) -> str:
 
 def profile(run: Run) -> RepoProfile:
     repo = run.worktree
-    paths = tracked_files(repo)
+    paths = [path for path in tracked_files(repo) if not under(path, run.repo.paths_hidden)]
     if not paths:
         raise StageFailure(FailureKind.GIT, "Repository has no tracked files to profile")
     hashes = {path: file_hash(repo, path) for path in paths}

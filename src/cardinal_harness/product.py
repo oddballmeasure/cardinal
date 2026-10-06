@@ -41,7 +41,8 @@ def write_config(home: Path, *, models: dict[str, str], slug: str, remote_url: s
         lines += ["[limits]", *(f"{key} = {value}" for key, value in limits.items()), ""]
     lines += ["[[repos]]", f"slug = {json.dumps(slug)}", f"remote_url = {json.dumps(remote_url)}",
               'base_branch = "main"', f"test_command = {toml_list(test_command)}",
-              f"required_checks = {toml_list(required_checks)}", f"paths_off_limits = {toml_list(paths_off_limits)}"]
+              f"required_checks = {toml_list(required_checks)}", f"paths_off_limits = {toml_list(paths_off_limits)}",
+              "paths_hidden = []"]  # graded targets never contain their own grader
     if deploy:
         lines += ["", "[repos.deploy]", f"transport = {json.dumps(deploy)}", 'local_directory = "deploy-host"']
     lines += extra_repos or []

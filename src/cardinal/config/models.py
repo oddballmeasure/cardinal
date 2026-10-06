@@ -75,6 +75,7 @@ class Repo(Strict):
     test_command: list[str] = Field(min_length=1, description="argv run in the worktree; no shell")
     required_checks: list[str] = Field(description="CI check names that must pass on the exact head; [] means none")
     paths_off_limits: list[str] = Field(description="Path prefixes agents may not change")
+    paths_hidden: list[str] = Field(description="Path prefixes agents may not see or change, such as a grader")
     branch_prefix: str = "cardinal"
     labels: Labels = Labels()
     deploy: Deploy | None = None
