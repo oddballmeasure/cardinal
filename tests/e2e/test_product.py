@@ -8,9 +8,11 @@ independent acceptance tests. Rerun any scenario with the report's `rerun_comman
 
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 from cardinal_harness.product import run_bounded
@@ -71,6 +73,69 @@ def test_monitor_files_triaged_issues_from_cardinal_crashes_and_app_records():
     finding, re-files a recurrence, and every JSONL line matches the published schema."""
     report = harness("offline", "--scenario", "monitor", timeout=900)
     assert len(report["checks"]) == 15
+
+
+def logs_cli(home: Path, *args: str):
+    return run_bounded([sys.executable, "-m", "cardinal.cli.main", "--home", str(home), "logs", *args],
+                       timeout=30, cwd=ROOT)
+
+
+def test_logs_query_streams_stored_records_with_composable_filters(tmp_path):
+    home = tmp_path / "cardinal-home"
+    init = run_bounded([sys.executable, "-m", "cardinal.cli.main", "--home", str(home),
+                        "init", "--repo", "team/app"], timeout=30, cwd=ROOT)
+    assert init.returncode == 0, init.stderr
+    schema = logs_cli(home, "schema")
+    assert schema.returncode == 0, schema.stderr
+    contract = json.loads(schema.stdout)
+
+    # Timestamp order differs from store order; the deleted row leaves a sequence gap.
+    specs = [("debug", "team/app", "f1"), ("info", "team/other", "f1"),
+             ("warning", "team/app", "f2"), ("error", "team/app", "f1"),
+             ("critical", "team/other", "f2"), ("error", "team/app", "f2"),
+             ("warning", "team/app", "f1"), ("critical", "team/app", "f1")]
+    records = {}
+    with sqlite3.connect(home / "store.db") as db:
+        for seq, (level, repo, fingerprint) in enumerate(specs, 1):
+            record = {"schema_version": 1, "id": f"record-{seq}",
+                      "at": f"2025-01-{9 - seq:02d}T00:00:00Z", "level": level,
+                      "event": "test_event", "message": f"message {seq}",
+                      "source": {"repo": repo, "component": "api"}, "fingerprint": fingerprint}
+            jsonschema.validate(record, contract)
+            records[seq] = record
+            db.execute("INSERT INTO logs (id, at, level, repo, component, event, fingerprint, record) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                       (record["id"], record["at"], level, repo, "api", record["event"],
+                        fingerprint, json.dumps(record)))
+        db.execute("DELETE FROM logs WHERE seq = 4")
+
+    def check(expected, *flags):
+        result = logs_cli(home, "query", *flags)
+        assert result.returncode == 0 and not result.stderr, result.stderr
+        lines = result.stdout.splitlines()
+        assert len(lines) == len(expected)
+        payloads = [json.loads(line) for line in lines]
+        assert payloads == [{"seq": seq, "record": records[seq]} for seq in expected]
+        for payload in payloads:
+            assert type(payload["seq"]) is int
+            jsonschema.validate(payload["record"], contract)
+
+    check([1, 2, 3, 5, 6, 7, 8])
+    check([3, 5, 6, 7, 8], "--level", "warning")
+    check([5, 8], "--level", "critical")
+    check([1, 3, 6, 7, 8], "--repo", "team/app")
+    check([1, 2, 7, 8], "--fingerprint", "f1")
+    check([7, 8], "--level", "warning", "--repo", "team/app", "--fingerprint", "f1")
+    check([5, 6], "--after-seq", "3", "--limit", "2")
+    check([6, 7], "--level", "warning", "--repo", "team/app",
+          "--after-seq", "3", "--limit", "2")
+    check([], "--repo", "missing/repo")
+    check([], "--limit", "0")
+
+    invalid = logs_cli(home, "query", "--level", "trace")
+    assert invalid.returncode == 2
+    assert invalid.stdout == ""
+    assert "trace" in json.loads(invalid.stderr)["error"]
 
 
 @pytest.mark.skipif(os.environ.get("CARDINAL_LIVE") != "1", reason="set CARDINAL_LIVE=1: uses GitHub, Actions and a paid model")
