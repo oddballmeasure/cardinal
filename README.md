@@ -113,6 +113,9 @@ uv run cardinal resume 42 --approve --note "..."   # answer a run waiting for a 
 
 With more than one `[[repos]]` entry, pass `--repo owner/name`.
 
+Cardinal reads model keys from the process environment only. To run it from a key file, export
+the file into the process first: `set -a; . ./.env; set +a; uv run --extra openai cardinal daemon`.
+
 ### How a run flows
 
 ```

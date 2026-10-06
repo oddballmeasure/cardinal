@@ -6,5 +6,9 @@ A live pass then proved that agents could satisfy the grader's tests when shown 
 they could deliver the issue. The product now tests only with the target repository's own
 `test_command`; acceptance runs in the harness after the merge, against a fresh clone.
 
+When Cardinal works on its own repository, the grader sits inside the worktree it edits, and file
+tools could read it. List such paths under `paths_hidden`: agents cannot read, list, search or
+change them, and the profiler skips them.
+
 Guard it with a check, not with care: `grep -r "cardinal_harness\|tests/acceptance" src/cardinal`
 must find nothing, and replay scripts reach the product only through `CARDINAL_MODEL_PROVIDER`.

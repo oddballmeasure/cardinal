@@ -66,6 +66,8 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [x] (earlier) Live self suite run 9f95ad33: prune (#1) paused for approval as designed, harness approved, Cardinal coded and verified it, but offline-e2e failed on its new test (2 of 3 old records pruned on the runner; likely SQLite date() parsing differs by version). Query (#2) not reached
 - [x] Live self suite, query (#2) alone: run caf2debf passed 6/6, PR #4 merged with green offline-e2e, hidden acceptance 4/4, cleanup clean (1.36M input tokens, 43 agent calls, ~17 min agent time)
 - [x] CI repair loop: a failed required check's log goes back to the coder (ci_repair_rounds, default 1); offline ci-repair scenario
+- [x] `paths_hidden`: agents can neither see nor change listed paths, so Cardinal's own grader can live in the repo it works on (d92496c, offline suite and CI green)
+- [x] Cardinal resolved a real issue on its own repository: oddballmeasure/cardinal#1 (logs query), run 7c3688c588a1 by `daemon --once`, PR #2 merged after offline-e2e passed on head 34c4f89; hidden acceptance 4/4 fail at baseline d92496c and 4/4 pass on merge 1bb55c6. 40 agent calls (36 profiler batches for the first full profile), 1.40M input / 35k output tokens, 20 min wall clock, no pause, no repair round
 - [ ] CI repair loop exercised on live CI (run 6b0fe756 passed CI first time, so the loop did not fire)
 - [ ] Smoke the notes suite after the live.py refactor (`live --only easy`)
 
