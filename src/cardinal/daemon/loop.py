@@ -36,17 +36,18 @@ def retry_sweep(repo: Repo, db: sqlite3.Connection) -> list[int]:
 
 
 def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection) -> list[dict]:
-    """Judge CI on earlier merges, then run every ready issue, re-polling after each so work labelled
-    meanwhile (including a follow-up filed for a failed merge) is included."""
+    """Run every ready issue, re-polling after each so work labelled meanwhile (including a follow-up
+    filed for a failed merge) is included. CI on earlier merges is judged before each claim: a queue of
+    hour-long runs would otherwise leave a merge unjudged until it expired."""
     issues.ensure_labels(repo.slug, repo.labels)
     requeued = retry_sweep(repo, db)
     if requeued:
         log.info("requeued %s after their retry window", requeued, extra={"event": "retry_requeued",
                                                                            "data": {"issues": requeued}})
-    post_merge.judge_all(repo, db)
     results: list[dict] = []
     attempted: set[int] = set()
     while True:
+        post_merge.judge_all(repo, db)
         pending = [number for number in issues.ready(repo.slug, repo.labels.ready) if number not in attempted]
         if not pending:
             return results
