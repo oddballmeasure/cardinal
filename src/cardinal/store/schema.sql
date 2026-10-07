@@ -100,3 +100,16 @@ CREATE TABLE IF NOT EXISTS findings (
     last_seen TEXT NOT NULL,
     filed_at TEXT NOT NULL
 );
+
+-- INPUT. Cardinal's judgement of all CI on each merge commit it made. A row stops a second re-run
+-- or a second follow-up issue, across daemon restarts. `rerun` is the only verdict judged again.
+CREATE TABLE IF NOT EXISTS post_merge (
+    repo TEXT NOT NULL,
+    merge_sha TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    verdict TEXT NOT NULL,             -- rerun | passed | no_checks | filing | filed | expired
+    rerun_checks TEXT NOT NULL,        -- JSON ids of the failed check runs that were re-run
+    follow_up INTEGER,                 -- the issue filed for checks that failed twice
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (repo, merge_sha)
+);

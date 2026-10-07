@@ -29,6 +29,7 @@ class Limits(Strict):
     coder_attempts: int = Field(default=3, ge=1, le=6)
     verify_rounds: int = Field(default=2, ge=1, le=4)
     ci_repair_rounds: int = Field(default=1, ge=0, le=2, description="Coder rounds fed a failed required check's log")
+    base_sync_rounds: int = Field(default=2, ge=0, le=4, description="Merges of a moved base branch into a run's branch")
     test_timeout_seconds: int = Field(default=1500, ge=30)
     ci_timeout_seconds: int = Field(default=2400, ge=60)
     ci_poll_seconds: int = Field(default=15, ge=1)

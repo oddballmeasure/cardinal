@@ -52,8 +52,9 @@ def ensure_labels(repo: str, labels: Labels) -> None:
         gh("label", "create", getattr(labels, key), "-R", repo, "--color", color, "--description", description, "--force")
 
 
-def create(repo: str, title: str, body: str) -> int:
-    url = gh("issue", "create", "-R", repo, "--title", title, "--body", body).strip().splitlines()[-1]
+def create(repo: str, title: str, body: str, labels: tuple[str, ...] = ()) -> int:
+    url = gh("issue", "create", "-R", repo, "--title", title, "--body", body,
+             *(arg for label in labels for arg in ("--label", label))).strip().splitlines()[-1]
     return int(url.rstrip("/").rsplit("/", 1)[1])
 
 

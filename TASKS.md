@@ -71,6 +71,14 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [ ] CI repair loop exercised on live CI (run 6b0fe756 passed CI first time, so the loop did not fire)
 - [ ] Smoke the notes suite after the live.py refactor (`live --only easy`)
 
+## Phase 10 — a base that moves, and CI after the merge
+- [x] Sync step: a moved base is merged in before publishing; a clean merge is tested and verified again, a conflict or red test goes back as a `SYNC` ticket whose commit completes the merge (refused while markers remain); `base_sync_rounds` (default 2), then `base_conflict` (oddballmeasure/cardinal#3, koizler #15). Offline `base-sync` 12/12
+- [x] `wait_for_ci` reads `mergeable`: UNKNOWN keeps polling, CONFLICTING goes back to sync at once instead of waiting out `ci_timeout` (`base-sync`: #12's wait saw UNKNOWN then conflict, no timeout)
+- [x] A CI failure names only the required checks that failed (koizler #14). Offline `ci-failure` with two required checks, one failing
+- [x] The daemon judges every check on each merge commit: re-run once, then one follow-up issue labelled ready, or needs-human when the merge came from a follow-up; judgements stored in `post_merge`. Offline `post-merge` 7/7 over 11 daemon processes
+- [ ] Live: not exercised against real GitHub yet: `mergeable` timing, `gh run rerun --failed`, run ids parsed from check runs' `details_url`, check runs listed after a re-run
+- [ ] Live suite shares one home across cases and the test repo runs `http-e2e` on push to main, so a merge failing twice there files a ready follow-up that a later case's `daemon --once` would work. Decide whether the suite should tolerate, park or disable that
+
 ## Discovered along the way
 - [x] Killed daemon left its test process group (and hung docker helpers) running: run_repo_tests now kills its group on any interruption; SIGTERM unwinds and settles the run as interrupted
 - [x] Live grader crashed querying checks for an unpushed commit, and ran Docker acceptance for runs that never merged: both fixed

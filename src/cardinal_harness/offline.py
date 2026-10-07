@@ -4,6 +4,9 @@
           a merge, and a deploy whose health becomes ready only on the second poll.
 `daemon`: four issues through `cardinal daemon --once`: #12 builds on #11's merge, #13 asks a
           person and is then declined via `cardinal resume`, #14 never passes its tests.
+`base-sync`: other merges land on main while #11 and #12 are worked; conflicts and a clean move are
+          merged in, resolved, verified again and merged.
+`post-merge`: checks that fail on merge commits are re-run once; a repeat failure files a follow-up.
 Every pass is judged from outside: fake-GitHub state, the bare remote's refs, `status --json`,
 and the independent acceptance tests in tests/acceptance.
 """
@@ -67,12 +70,13 @@ def world(temp: Path, ready: list[int], ci: list[str] | None = None,
     return bare, state_path, state
 
 
-def configure(temp: Path, bare: Path, state_path: Path, artifact: Path) -> Product:
+def configure(temp: Path, bare: Path, state_path: Path, artifact: Path, required_checks: list[str] | None = None,
+              env: dict[str, str] | None = None) -> Product:
     home = temp / "home"
     write_config(home, models={role: "replay:scripted" for role in
                                ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor")},
                  slug=SLUG, remote_url=str(bare), test_command=[sys.executable, "-m", "pytest", "-q", "tests"],
-                 required_checks=[CHECK], paths_off_limits=[".github/"], deploy="local",
+                 required_checks=required_checks or [CHECK], paths_off_limits=[".github/"], deploy="local",
                  limits={"coder_attempts": 2, "ci_poll_seconds": 1, "ci_timeout_seconds": 120})
     fake_bin = fake_gh.install(temp / "bin")
     env = product_env({
@@ -81,6 +85,7 @@ def configure(temp: Path, bare: Path, state_path: Path, artifact: Path) -> Produ
         "CARDINAL_MODEL_PROVIDER": "cardinal_harness.replay_provider:provider",
         "CARDINAL_DEPLOY_HOST": "cardinal_harness.mock_host:factory",
         "CARDINAL_MOCK_HOST_FIXTURE": str(FIXTURES / "deploy_hosts" / "default.json"),
+        **(env or {}),
     })
     return Product(home, env, artifact)
 
@@ -187,13 +192,18 @@ def daemon(temp: Path, artifact: Path) -> dict:
 
 
 def ci_failure(temp: Path, artifact: Path) -> dict:
-    bare, state_path, _ = world(temp, ready=[104], ci=["pending", "failure"])
-    product = configure(temp, bare, state_path, artifact)
+    bare, state_path, state = world(temp, ready=[104], ci=["pending", "failure"])
+    state["ci"]["also"] = ["ledger-lint"]
+    json_file(state_path, state)
+    product = configure(temp, bare, state_path, artifact, required_checks=[CHECK, "ledger-lint"])
     base = git(bare, "rev-parse", "refs/heads/main")
     checks: dict = {}
     code, result = product("run", "104")
     expect(checks, "cardinal run exits 1", code == 1, result)
-    expect(checks, "failure is ci_failed", isinstance(result, dict) and (result.get("failure") or {}).get("kind") == "ci_failed", result)
+    failure = (result.get("failure") or {}) if isinstance(result, dict) else {}
+    expect(checks, "failure is ci_failed", failure.get("kind") == "ci_failed", result)
+    expect(checks, "the failure names only the check that failed",
+           f"['{CHECK}'] failed" in failure.get("detail", "") and "ledger-lint" not in failure.get("detail", ""), failure)
     state = json.loads(state_path.read_text())
     expect(checks, "the PR stays open and unmerged", [pr["state"] for pr in state["prs"]] == ["OPEN"], state["prs"])
     expect(checks, "main did not move", git(bare, "rev-parse", "refs/heads/main") == base)
@@ -239,6 +249,138 @@ def ci_repair(temp: Path, artifact: Path) -> dict:
     expect(checks, "the verifier checked the repaired head again", len(verdicts) == 2, len(verdicts))
     after = acceptance(bare, temp / "after", 104)
     expect(checks, "acceptance passes on the new main", after["exit_code"] == 0, after)
+    product.keep_store()
+    json_file(artifact / "github_state.json", state)
+    return {"checks": checks, "invocations": product.invocations}
+
+
+def appended_test(name: str, merchant: str, ids: list[str]) -> str:
+    return (f"\n\ndef {name}() -> None:\n"
+            "    result = subprocess.run([sys.executable, '-m', 'ledger', '--input', 'data/transactions.json',\n"
+            f"                             '--merchant', {merchant!r}], text=True, capture_output=True, check=False)\n"
+            "    assert result.returncode == 0, result.stderr\n"
+            f"    assert [row['id'] for row in json.loads(result.stdout)] == {ids!r}\n")
+
+
+def parents(bare: Path, sha: str) -> list[str]:
+    return git(bare, "rev-list", "--parents", "-n", "1", sha).split()[1:]
+
+
+def base_sync(temp: Path, artifact: Path) -> dict:
+    """Other PRs merge into main while the daemon works #11 then #12, like koizler #15 (cardinal#3).
+    #11: a test appended to the file its ticket rewrites lands while it is coded, so the pre-publish
+    sync conflicts. #12: a new test file lands while it is coded (a clean move, tested and verified
+    again), then another conflicting test lands after its PR opens, so waiting for CI sees the PR
+    conflicting and sends it back to sync. Both use the default two sync rounds and merge."""
+    bare, state_path, _ = world(temp, ready=[11, 12])
+    landings = temp / "landings.json"
+    json_file(landings, [
+        {"issue": 11, "stage": "coder", "message": "Cover an unknown merchant",
+         "append": {"tests/test_cli.py": appended_test("test_unknown_merchant_selects_nothing", "Nobody", [])}},
+        {"issue": 12, "stage": "coder", "message": "Cover the books merchant in its own file",
+         "write": {"tests/test_books.py": "import json\nimport subprocess\nimport sys" + appended_test(
+             "test_books_merchant", "Books", ["t-003"])}},
+        {"issue": 12, "stage": "pr_manager", "message": "Cover merchant names with a comma",
+         "append": {"tests/test_cli.py": appended_test("test_merchant_with_comma", "Office, East", ["t-001"])}},
+    ])
+    product = configure(temp, bare, state_path, artifact, env={"CARDINAL_REPLAY_LANDINGS": str(landings)})
+    checks: dict = {}
+    code, results = product("daemon", "--once")
+    by_issue = {item["issue"]: item for item in results} if isinstance(results, list) else {}
+    expect(checks, "both issues done", code == 0 and [by_issue.get(n, {}).get("status") for n in (11, 12)] == ["done", "done"],
+           results)
+    landed = [item.get("landed") for item in json.loads(landings.read_text())]
+    expect(checks, "all three other merges landed", all(landed), landed)
+    state = json.loads(state_path.read_text())
+    run11, run12 = product.status(11)[-1], product.status(12)[-1]
+    syncs = {number: [event["data"] for event in run["events"] if event["stage"] == "sync" and event["kind"] == "merged"]
+             for number, run in ((11, run11), (12, run12))}
+    expect(checks, "#11 merged main in once, with a conflict in the rewritten test file",
+           [(item["base_sha"], item["conflicts"]) for item in syncs[11]] == [(landed[0], ["tests/test_cli.py"])], syncs[11])
+    expect(checks, "#12 merged a clean move, then a conflict GitHub reported while waiting for CI",
+           [(item["base_sha"], item["conflicts"]) for item in syncs[12]] == [(landed[1], []), (landed[2], ["tests/test_cli.py"])],
+           syncs[12])
+    ci12 = [item.get("status") for event in run12["events"] if event["kind"] == "events"
+            for item in event["data"] if item.get("action") == "ci"]
+    expect(checks, "#12's first wait stopped on the conflict, not a timeout",
+           "conflict" in ci12 and "timeout" not in ci12 and ci12[-1] == "success", ci12)
+    expect(checks, "#12 kept its PR and reported the conflict", any(event["kind"] == "conflict" for event in run12["events"])
+           and [pr["state"] for pr in state["prs"]] == ["MERGED", "MERGED"], state["prs"])
+    tickets = {number: [event["data"]["ticket"] for event in run["events"] if event["kind"] == "committed"]
+               for number, run in ((11, run11), (12, run12))}
+    expect(checks, "conflicts were resolved through SYNC tickets", tickets == {11: ["DATE", "SYNC-1"], 12: ["CSV", "SYNC-2"]},
+           tickets)
+    verdicts = {number: len([event for event in run["events"] if event["kind"] == "verdict"]) for number, run in ((11, run11), (12, run12))}
+    expect(checks, "every new head was verified again", verdicts == {11: 2, 12: 3}, verdicts)
+    merged = {pr["number"]: pr["headRefOid"] for pr in state["prs"]}
+    expect(checks, "each merged head is its run's verified head and contains what landed",
+           merged == {1: run11["head_sha"], 2: run12["head_sha"]}
+           and landed[0] in parents(bare, run11["head_sha"]) and landed[2] in parents(bare, run12["head_sha"]), merged)
+    expect(checks, "CI was awaited only on the two merged heads", state["ci"].get("heads") == [merged.get(1), merged.get(2)],
+           state["ci"].get("heads"))
+    checkout = temp / "final"
+    subprocess.run(["git", "clone", "-q", str(bare), str(checkout)], check=True)
+    suite = subprocess.run([sys.executable, "-m", "pytest", "-q", "tests", "-p", "no:cacheprovider"], cwd=checkout,
+                           text=True, capture_output=True, check=False, timeout=600)
+    kept = {number: git(bare, "show", f"{merged.get(number)}:tests/test_cli.py") if merged.get(number) else ""
+            for number in (1, 2)}
+    expect(checks, "each resolution kept both sides' tests, and main passes them",
+           suite.returncode == 0 and (checkout / "tests" / "test_books.py").exists()
+           and all(f"def {name}(" in kept[1] for name in ("test_unknown_merchant_selects_nothing",
+                                                          "test_since_includes_boundary_and_later"))
+           and all(f"def {name}(" in kept[2] for name in ("test_merchant_with_comma", "test_csv_filter_preserves_unicode")),
+           {"stdout": suite.stdout[-2000:], "kept": kept})
+    expect(checks, "independent acceptance for these features passes on main", acceptance(bare, temp / "acc", 104)["exit_code"] == 0)
+    product.keep_store()
+    json_file(artifact / "github_state.json", state)
+    return {"checks": checks, "invocations": product.invocations}
+
+
+def post_merge(temp: Path, artifact: Path) -> dict:
+    """Checks on merge commits finish after Cardinal merged. #11's merge has a flaky check that passes
+    when re-run: nothing is filed. #12's merge has one that fails twice: one follow-up issue, labelled
+    ready, which the daemon then fixes; that fix's merge fails the same way and goes to a person.
+    Every `daemon --once` is a fresh process, so judgements must survive restarts."""
+    bare, state_path, state = world(temp, ready=[11, 12])
+    state["ci"]["push"] = [{CHECK: ["success"], "browser-e2e": ["failure", "success"]},
+                           {CHECK: ["success"], "browser-e2e": ["failure", "failure"]}]
+    state["ci"]["log"] = "2026-01-01T00:00:00.0000000Z FAILED tests/e2e/test_browser.py::test_flow - Timeout 30000ms"
+    json_file(state_path, state)
+    product = configure(temp, bare, state_path, artifact)
+    checks: dict = {}
+    code, first = product("daemon", "--once")
+    expect(checks, "#11 and #12 merged", code == 0 and [item.get("status") for item in first or []] == ["done", "done"], first)
+    polls = []
+    for _ in range(10):
+        code, results = product("daemon", "--once")
+        state = json.loads(state_path.read_text())
+        polls.append({"exit": code, "issues": sorted(state["issues"], key=int), "results": results})
+    state = json.loads(state_path.read_text())
+    filed = {number: issue for number, issue in state["issues"].items() if issue["title"].startswith("CI failed on main")}
+    merges = [pr["mergeCommit"]["oid"] for pr in state["prs"] if pr.get("mergeCommit")]
+    reruns = [call for call in state["calls"] if call[:2] == ["run", "rerun"]]
+    expect(checks, "three merges were judged", len(merges) == 3, state["prs"])
+    expect(checks, "each failed merge was re-run once",
+           sorted(call[2] for call in reruns) == ["9000", "9001", "9002"] and all("--failed" in call for call in reruns), reruns)
+    first_filed = next((issue for issue in filed.values() if "after #2:" in issue["title"]), {})
+    created = [call for call in state["calls"] if call[:2] == ["issue", "create"]]
+    expect(checks, "the flaky check filed nothing; the repeated failure filed one issue, created ready",
+           not any("after #1:" in issue["title"] for issue in filed.values())
+           and first_filed.get("title") == "CI failed on main after #2: browser-e2e"
+           and any(first_filed["title"] in call and "--label" in call and call[call.index("--label") + 1] == "cardinal:ready"
+                   for call in created),
+           {"filed": filed, "created": created})
+    body = first_filed.get("body") or ""
+    expect(checks, "the follow-up names the checks, merge, PR, issue and log",
+           all(part in body for part in ("`browser-e2e`", merges[1] if len(merges) > 1 else "?", "#2", "#12",
+                                         "FAILED tests/e2e/test_browser.py::test_flow"))
+           and "2026-01-01T00:00:00" not in body, body[:1500])
+    looped = next((issue for issue in filed.values() if issue is not first_filed), {})
+    expect(checks, "the follow-up was fixed and merged, and its own failed merge went to a person",
+           first_filed.get("state") == "CLOSED" and len(filed) == 2
+           and looped.get("labels") == ["cardinal:needs-human"] and "needs a person" in (looped.get("body") or ""), filed)
+    expect(checks, "later polls file nothing more and never fail", polls[-1]["issues"] == polls[-3]["issues"]
+           and all(item["exit"] == 0 for item in polls), polls)
     product.keep_store()
     json_file(artifact / "github_state.json", state)
     return {"checks": checks, "invocations": product.invocations}
@@ -295,7 +437,7 @@ def monitor(temp: Path, artifact: Path) -> dict:
 
 
 SCENARIOS = {"single": single, "daemon": daemon, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
-             "cleaner": cleaner, "monitor": monitor}
+             "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge}
 
 
 def run(scenario: str, artifact: Path) -> dict:

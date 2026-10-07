@@ -95,13 +95,16 @@ def implement_node(state: RunState, run: Run) -> dict:
     tickets = [Ticket.model_validate(item) for item in state["tickets"]]
     base_sha = runtime.fresh_base(run, state["base_sha"])
     repair = None
-    if state.get("ci_repair"):
+    if state.get("sync"):
+        repair = runtime.sync_ticket(decision, tickets, run.repo.base_branch, state["sync"], state["sync_round"])
+    elif state.get("ci_repair"):
         repair = runtime.ci_repair_ticket(decision, tickets, state["ci_repair"], state["ci_round"])
     elif state.get("repair"):
         repair = runtime.repair_ticket(decision, tickets, state["repair"], state.get("verify_round", 1))
     head_sha, tests = runtime.implement(run, decision, tickets, base_sha, repair)
     runs.update(run.db, run.run_id, head_sha=head_sha)
-    return {"base_sha": base_sha, "head_sha": head_sha, "head_tests": tests, "repair": None, "ci_repair": None}
+    return {"base_sha": base_sha, "head_sha": head_sha, "head_tests": tests, "repair": None, "ci_repair": None,
+            "sync": None}
 
 
 @guarded("verify")
@@ -120,6 +123,14 @@ def verify_node(state: RunState, run: Run) -> dict:
     return {"verdict": verdict.model_dump(), "repair": verdict.findings, "verify_round": round_number + 1}
 
 
+@guarded("sync")
+def sync_node(state: RunState, run: Run) -> dict:
+    update = runtime.sync_base(run, state)
+    if update.get("head_sha"):
+        runs.update(run.db, run.run_id, head_sha=update["head_sha"])
+    return update
+
+
 @guarded("publish")
 def publish_node(state: RunState, run: Run) -> dict:
     pushed = publish(run.worktree, run.branch)
@@ -132,11 +143,16 @@ def publish_node(state: RunState, run: Run) -> dict:
 def pr_node(state: RunState, run: Run) -> dict:
     try:
         result = pr_manager.land(run, Verdict.model_validate(state["verdict"]))
+    except pr_manager.BaseConflict as exc:
+        if state.get("sync_round", 0) >= run.config.limits.base_sync_rounds:
+            raise
+        run.recorder.event("pr", "conflict", {"detail": exc.detail})
+        return {"resync": True}  # back to sync: merge the base in, then implement or verify again
     except pr_manager.CIFailed as exc:
         used = state.get("ci_round", 0)
         if used >= run.config.limits.ci_repair_rounds:
             raise
-        log = failure_log(run.repo.slug, exc.head_sha, run.repo.required_checks)
+        log = failure_log(run.repo.slug, exc.head_sha, exc.failed)
         run.recorder.event("pr", "ci_repair", {"round": used + 1, "head_sha": exc.head_sha, "log": log[-2000:]})
         # Back to the coder with the log; the verifier then gets its full rounds on the repaired head.
         return {"ci_repair": [log], "ci_round": used + 1, "verify_round": 1}

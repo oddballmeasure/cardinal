@@ -7,6 +7,10 @@ wiring and gates, never model reasoning. Scripts are keyed on the ledger fixture
 """
 
 import json
+import os
+import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -60,11 +64,45 @@ def last_result(messages: list) -> dict | list | str:
 
 def provider(context: dict):
     stage = context["stage"]
+    land_elsewhere(context)
     if stage == "monitor":
         return monitor(context)
     title = context["issue"]["title"]
     return {"profiler": profiler, "orchestrator": orchestrator, "coder": coder, "verifier": verifier,
             "pr_manager": pr_manager, "deployer": deployer}[stage](context, title)
+
+
+# --- the world moving on -----------------------------------------------------------------------
+
+def land_elsewhere(context: dict) -> None:
+    """Plays another PR merging into main while this run works: each landing in the JSON file named by
+    CARDINAL_REPLAY_LANDINGS is committed on the remote's main once, when its issue reaches its stage.
+    Landings: [{"issue": 11, "stage": "coder", "message": "...", "append": {path: text}, "write": {path: text}}]."""
+    path = os.environ.get("CARDINAL_REPLAY_LANDINGS")
+    if not path or "worktree" not in context:
+        return
+    landings = json.loads(Path(path).read_text())
+    due = [item for item in landings if not item.get("landed") and item["issue"] == context["issue"]["number"]
+           and item["stage"] == context["stage"]]
+    if not due:
+        return
+    run = lambda *args, cwd=None: subprocess.run(["git", *args], cwd=cwd, text=True, capture_output=True,  # noqa: E731
+                                                 check=True).stdout.strip()
+    bare = run("-C", context["worktree"], "remote", "get-url", "origin")
+    for landing in due:
+        with tempfile.TemporaryDirectory() as work:
+            run("clone", "-q", "--branch", "main", bare, work)
+            for name, text in landing.get("append", {}).items():
+                with open(Path(work) / name, "a") as handle:
+                    handle.write(text)
+            for name, text in landing.get("write", {}).items():
+                (Path(work) / name).write_text(text)
+            run("add", "-A", cwd=work)
+            run("-c", "user.name=Elsewhere", "-c", "user.email=elsewhere@example.invalid", "commit", "-qm",
+                landing["message"], cwd=work)
+            run("push", "-q", "origin", "HEAD:refs/heads/main", cwd=work)
+            landing["landed"] = run("rev-parse", "HEAD", cwd=work)
+    Path(path).write_text(json.dumps(landings, indent=2))
 
 
 # --- profiler -----------------------------------------------------------------------------------
@@ -149,6 +187,12 @@ def decision_for(context: dict) -> IntakeDecision:
     if title.startswith("Intake crashes"):
         return IntakeDecision(kind="needs_human", size="m", risks=[], requirements=[], tickets=[], issue_number=number,
                               reason="The crash comes from the model provider hook; which component owns it?")
+    if title.startswith("CI failed on main after"):
+        return IntakeDecision(kind="bug", reason="A check failed on main after a merge", tickets=[Ticket(
+            id="POST-MERGE-CI", source_issue=number, title="Fix the check that failed on main",
+            task="Make the failing check pass at its cause.", acceptance_criteria=["The check passes"], covers=["R1"],
+            depends_on=[], target_files=["tests/test_cli.py"])], **{**common, "requirements": [
+                Requirement(id="R1", text="The check that failed after the merge passes on main")]})
     if title.startswith("Add a total flag"):
         return IntakeDecision(kind="feature", reason="One CLI flag", tickets=[Ticket(
             id="TOTAL", source_issue=number, title="Print a total", task="Add --total printing the amount sum.",
@@ -203,18 +247,44 @@ def writes_for(ticket_id: str) -> dict[str, str]:
             "    assert len(json.loads(result.stdout)) == 3\n")}
     if ticket_id.startswith("CI-REPAIR-"):
         return {"tests/test_ci_repair.py": "def test_ci_environment_fix_is_covered():\n    assert True\n"}
+    if ticket_id == "POST-MERGE-CI":
+        return {"tests/test_post_merge.py": "def test_browser_flow_is_stable():\n    assert True\n"}
     if ticket_id == "TOTAL":
         return {"tests/test_total.py": "def test_total_flag_is_printed():\n    assert False, 'total flag missing'\n"}
     raise ValueError(f"No replay candidate for ticket {ticket_id}")
 
 
+CONFLICT = re.compile(r"^<<<<<<< [^\n]*\n(.*?)(?:^\|{7}[^\n]*\n.*?)?^=======\n(.*?)^>>>>>>> [^\n]*\n",
+                      re.MULTILINE | re.DOTALL)
+
+
+def resolve_conflicts(context: dict) -> dict[str, str]:
+    """A SYNC ticket's conflicts, resolved as a careful person would in the incident's shape: when the
+    other side only appended to the file, keep this side's file and add what was appended. Otherwise
+    keep each hunk's two sides in turn."""
+    worktree = Path(context["worktree"])
+    show = lambda ref: subprocess.run(["git", "show", ref], cwd=worktree, text=True,  # noqa: E731
+                                      capture_output=True, check=True).stdout
+    base = subprocess.run(["git", "merge-base", "HEAD", "MERGE_HEAD"], cwd=worktree, text=True,
+                          capture_output=True, check=True).stdout.strip()
+    resolved = {}
+    for path in context["ticket"]["target_files"]:
+        original, theirs = show(f"{base}:{path}"), show(f"MERGE_HEAD:{path}")
+        if theirs.startswith(original):
+            resolved[path] = show(f"HEAD:{path}") + theirs[len(original):]
+        else:
+            resolved[path] = CONFLICT.sub(lambda match: match.group(1) + match.group(2), (worktree / path).read_text())
+    return resolved
+
+
 def coder(context: dict, title: str):
     ticket_id = context["ticket"]["id"]
+    writes = resolve_conflicts(context) if ticket_id.startswith("SYNC-") else writes_for(ticket_id)
     return Scripted(messages=iter([
         call("read_file", {"file_path": "/skills/coder/SKILL.md"}, "skill"),
         call("read_file", {"file_path": "/context/ticket.json"}, "ticket"),
         *(call("write_file", {"file_path": f"/repo/{path}", "content": content}, f"write-{index}")
-          for index, (path, content) in enumerate(writes_for(ticket_id).items())),
+          for index, (path, content) in enumerate(writes.items())),
         call("run_repo_tests", {}, "tests"),
         AIMessage(content=f"Implemented {ticket_id} and ran the repository tests."),
     ]))

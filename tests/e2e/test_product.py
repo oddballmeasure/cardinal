@@ -48,7 +48,23 @@ def test_daemon_orders_claims_pauses_for_people_and_labels_failures():
 
 
 def test_failed_ci_leaves_pr_open_and_main_untouched():
+    """Two required checks, one fails: the failure names only that one."""
     harness("offline", "--scenario", "ci-failure", timeout=900)
+
+
+def test_base_moving_during_a_run_is_merged_in_resolved_and_verified_again():
+    """Other merges land on main while #11 and #12 are worked: a conflict before publishing, a clean
+    move, and a conflict GitHub reports while waiting for CI are each merged in, resolved through a
+    SYNC ticket where needed, verified again, and merged without waiting out the CI timeout."""
+    report = harness("offline", "--scenario", "base-sync", timeout=1200)
+    assert len(report["checks"]) == 12
+
+
+def test_checks_failing_after_merge_are_rerun_once_then_filed_without_looping():
+    """A flaky check on a merge commit passes on re-run and files nothing; one that fails twice files
+    one ready follow-up, which is fixed; the fix's own failing merge goes to a person."""
+    report = harness("offline", "--scenario", "post-merge", timeout=1800)
+    assert len(report["checks"]) == 7
 
 
 def test_ci_failure_log_goes_back_to_the_coder_and_the_repaired_head_merges():

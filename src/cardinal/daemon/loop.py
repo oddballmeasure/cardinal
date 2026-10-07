@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from cardinal import app
 from cardinal.config.models import Config, Repo
+from cardinal.daemon import post_merge
 from cardinal.github import issues
 from cardinal.graph.failures import FailureKind
 from cardinal.home import Home
@@ -35,12 +36,14 @@ def retry_sweep(repo: Repo, db: sqlite3.Connection) -> list[int]:
 
 
 def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection) -> list[dict]:
-    """Run every ready issue, re-polling after each so work labelled meanwhile is included."""
+    """Judge CI on earlier merges, then run every ready issue, re-polling after each so work labelled
+    meanwhile (including a follow-up filed for a failed merge) is included."""
     issues.ensure_labels(repo.slug, repo.labels)
     requeued = retry_sweep(repo, db)
     if requeued:
         log.info("requeued %s after their retry window", requeued, extra={"event": "retry_requeued",
                                                                            "data": {"issues": requeued}})
+    post_merge.judge_all(repo, db)
     results: list[dict] = []
     attempted: set[int] = set()
     while True:

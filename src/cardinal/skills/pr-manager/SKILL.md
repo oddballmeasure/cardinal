@@ -11,7 +11,7 @@ Input: `/context/verdict.json` (approved, bound to one head) and `/context/issue
    once, with a clear title and a body that starts `Closes #<issue>` and summarises the change
    and its tests.
 2. Call `wait_for_ci` for that PR.
-3. Call `merge_pull_request` only when `wait_for_ci` returned `success`. On `failure` or
-   `timeout`, stop and report it; do not merge.
+3. Call `merge_pull_request` only when `wait_for_ci` returned `success`. On `failure`,
+   `conflict` or `timeout`, stop and report it; do not merge. Cardinal handles each of them.
 
 The tools pin the repository, branch, base and head. Do nothing else on GitHub.

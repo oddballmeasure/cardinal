@@ -1,6 +1,9 @@
-"""profile → intake → [human ↺ intake] → implement ⇄ verify → publish → pr → [deploy] → done
+"""profile → intake → [human ↺ intake] → implement ⇄ verify → sync → publish → pr → [deploy] → done
 
-A required check that fails sends its log from pr back to implement, up to ci_repair_rounds times."""
+sync merges a moved base into the verified branch: a clean merge goes back to verify, a conflict or a
+failing test to implement. A PR that GitHub reports conflicting goes from pr back to sync; both share
+base_sync_rounds. A required check that fails sends its log from pr back to implement, up to
+ci_repair_rounds times."""
 
 from functools import partial
 
@@ -29,7 +32,15 @@ def after_human(state: RunState) -> str:
 def after_verify(state: RunState) -> str:
     if failed(state):
         return END
-    return "implement" if state.get("repair") else "publish"
+    return "implement" if state.get("repair") else "sync"
+
+
+def after_sync(state: RunState) -> str:
+    if failed(state):
+        return END
+    if state.get("sync"):
+        return "implement"
+    return "verify" if state["head_sha"] != state["verdict"]["head_sha"] else "publish"
 
 
 def after_pr(run: Run, state: RunState) -> str:
@@ -37,6 +48,8 @@ def after_pr(run: Run, state: RunState) -> str:
         return END
     if state.get("ci_repair"):
         return "implement"
+    if state.get("resync"):
+        return "sync"
     return "deploy" if run.repo.deploy else "done"
 
 
@@ -46,7 +59,7 @@ def on_success(target: str):
 
 def build(run: Run, checkpointer):
     graph = StateGraph(RunState)
-    for name in ("profile", "intake", "human", "implement", "verify", "publish", "pr", "deploy", "done"):
+    for name in ("profile", "intake", "human", "implement", "verify", "sync", "publish", "pr", "deploy", "done"):
         graph.add_node(name, partial(getattr(nodes, f"{name}_node"), run=run))
     graph.add_edge(START, "profile")
     graph.add_conditional_edges("profile", on_success("intake"))
@@ -54,6 +67,7 @@ def build(run: Run, checkpointer):
     graph.add_conditional_edges("human", after_human)
     graph.add_conditional_edges("implement", on_success("verify"))
     graph.add_conditional_edges("verify", after_verify)
+    graph.add_conditional_edges("sync", after_sync)
     graph.add_conditional_edges("publish", on_success("pr"))
     graph.add_conditional_edges("pr", partial(after_pr, run))
     graph.add_conditional_edges("deploy", on_success("done"))

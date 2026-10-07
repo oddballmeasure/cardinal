@@ -14,6 +14,7 @@ class FailureKind(StrEnum):
     VERIFICATION = "verification"            # verifier rounds exhausted without approval
     CI_FAILED = "ci_failed"
     CI_TIMEOUT = "ci_timeout"
+    BASE_CONFLICT = "base_conflict"          # the base branch moved and still conflicts after base_sync_rounds
     PR_VIOLATION = "pr_violation"            # PR manager misused a tool or stopped before merging
     DEPLOY = "deploy"                        # deployment script failed or never became healthy
     GIT = "git"
@@ -24,7 +25,8 @@ class FailureKind(StrEnum):
     def level(self) -> int:
         """Defects in Cardinal or its tools are errors; outcomes of honest work are warnings."""
         outcomes = {FailureKind.TESTS_FAILED, FailureKind.NO_CHANGE, FailureKind.VERIFICATION,
-                    FailureKind.CI_FAILED, FailureKind.CI_TIMEOUT, FailureKind.PROVIDER}
+                    FailureKind.CI_FAILED, FailureKind.CI_TIMEOUT, FailureKind.BASE_CONFLICT,
+                    FailureKind.PROVIDER}
         return logging.WARNING if self in outcomes else logging.ERROR
 
     @property

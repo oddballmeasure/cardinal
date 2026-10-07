@@ -37,6 +37,7 @@ recursion_limit = 250
 coder_attempts = 3
 verify_rounds = 2
 ci_repair_rounds = 1        # coder rounds that get a failed required check's log before the run fails
+base_sync_rounds = 2        # merges of a moved base branch into a run's branch before a conflict fails it
 test_timeout_seconds = 1500
 ci_timeout_seconds = 2400
 ci_poll_seconds = 15

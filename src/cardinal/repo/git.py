@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -22,14 +23,18 @@ class GitError(RuntimeError):
     pass
 
 
-def git(repo: Path, *args: str, timeout: int = 120) -> str:
+def run_git(repo: Path, *args: str, timeout: int = 120, codes: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess:
     result = subprocess.run(
         ["git", *IDENTITY, *args], cwd=repo, text=True, capture_output=True, check=False,
         timeout=timeout, env={**os.environ, **CREDENTIALS},
     )
-    if result.returncode != 0:
+    if result.returncode not in codes:
         raise GitError(f"git {' '.join(args)} failed ({result.returncode}): {result.stderr.strip()[-2000:]}")
-    return result.stdout
+    return result
+
+
+def git(repo: Path, *args: str, timeout: int = 120) -> str:
+    return run_git(repo, *args, timeout=timeout).stdout
 
 
 def guard_target(url: str) -> None:
@@ -88,6 +93,10 @@ def head(worktree: Path) -> str:
 
 
 def commit_all(worktree: Path, message: str) -> str:
+    """Commit everything. During a merge this commit completes it, so it refuses while markers remain."""
+    left = unresolved(worktree)
+    if left:
+        raise GitError(f"Refusing to commit: conflict markers remain in {left}")
     git(worktree, "add", "-A")
     git(worktree, "commit", "-q", "-m", message)
     return head(worktree)
@@ -143,3 +152,42 @@ def ticket_commits(worktree: Path, base_sha: str) -> dict[str, str]:
 def reset_to(worktree: Path, sha: str) -> None:
     git(worktree, "reset", "-q", "--hard", sha)
     git(worktree, "clean", "-q", "-fd")
+
+
+def is_ancestor(repo: Path, ancestor: str, descendant: str) -> bool:
+    return run_git(repo, "merge-base", "--is-ancestor", ancestor, descendant, codes=(0, 1)).returncode == 0
+
+
+def would_conflict(repo: Path, ours: str, theirs: str) -> bool:
+    return run_git(repo, "merge-tree", "--write-tree", ours, theirs, codes=(0, 1)).returncode == 1
+
+
+def merge(worktree: Path, ref: str, message: str) -> list[str]:
+    """Merge ref into HEAD. A clean merge is committed and returns []. A conflicted one is left in
+    progress, markers in place, and returns the conflicted paths: the next accepted commit completes it."""
+    result = run_git(worktree, "merge", "--no-ff", "--no-edit", "-m", message, ref, timeout=300, codes=(0, 1))
+    if result.returncode == 0:
+        return []
+    conflicted = git(worktree, "diff", "--name-only", "--diff-filter=U").splitlines()
+    if not conflicted:
+        raise GitError(f"git merge {ref} failed: {(result.stdout + result.stderr).strip()[-2000:]}")
+    return conflicted
+
+
+def merging(worktree: Path) -> bool:
+    return (worktree / git(worktree, "rev-parse", "--git-path", "MERGE_HEAD").strip()).exists()
+
+
+MARKER = re.compile(r"^(<{7}|>{7}) ", re.MULTILINE)
+
+
+def unresolved(worktree: Path) -> list[str]:
+    """Files changed on both sides of an in-progress merge that still hold conflict markers. Derived
+    from the commits, because `git add -N` (fingerprint, changed_files) drops the index's unmerged entries."""
+    if not merging(worktree):
+        return []
+    base = git(worktree, "merge-base", "HEAD", "MERGE_HEAD").strip()
+    ours = set(git(worktree, "diff", "--name-only", base, "HEAD").splitlines())
+    theirs = set(git(worktree, "diff", "--name-only", base, "MERGE_HEAD").splitlines())
+    return sorted(path for path in ours & theirs
+                  if (worktree / path).is_file() and MARKER.search((worktree / path).read_text(errors="replace")))

@@ -7,10 +7,18 @@ Branch heads are read from the bare remote on every call, as GitHub would report
 
 State lives in the JSON file named by CARDINAL_FAKE_GH_STATE:
   repository, bare, issues{number: {...}}, labels[], prs[], next_pr,
-  ci{"script": ["pending", "success"], "check": "name", "scripts": [[...], ...], "log": "..."},
+  ci{"script": ["pending", "success"], "check": "name", "scripts": [[...], ...], "log": "...",
+     "also": ["name"], "push": [{"name": ["failure", "success"]}, ...]},
   check_calls{sha: n}. With "scripts", the Nth distinct head checked follows the Nth script (the last
-  repeats), so a repaired head can pass where the first failed. "log" is every failed job's log.
+  repeats), so a repaired head can pass where the first failed. "also" names checks that pass on every
+  PR head once the scripted one is listed. "log" is every failed job's log.
+  "push" is the base branch's CI on merge commits: the Nth merge follows the Nth entry (the last
+  repeats), where each check lists its conclusion per attempt; every attempt is in progress when first
+  listed, and `gh run rerun --failed` starts the next attempt of each failed job.
   other_repos{slug: {issues, labels}}: further repositories that hold only issues and labels
+
+Like GitHub, `mergeable` is computed from the real refs (`git merge-tree`) and reads UNKNOWN the first
+time a head/base pair is asked about; a conflicting PR runs no pull_request CI and cannot be merged.
 """
 
 import json
@@ -45,9 +53,32 @@ def issue_json(issue: dict) -> dict:
     return {**issue, "labels": [{"name": name} for name in issue["labels"]]}
 
 
-def pr_json(state: dict, pr: dict) -> dict:
+def conflicting(state: dict, pr: dict) -> bool:
+    merge = subprocess.run(["git", "--git-dir", state["bare"], "merge-tree", "--write-tree",
+                            f"refs/heads/{pr['baseRefName']}", f"refs/heads/{pr['headRefName']}"],
+                           text=True, capture_output=True, check=False)
+    if merge.returncode not in (0, 1):
+        raise SystemExit(f"fake gh: merge-tree failed: {merge.stderr}")
+    return merge.returncode == 1
+
+
+def mergeable(state: dict, pr: dict, sha: str) -> str:
+    if pr["state"] != "OPEN":
+        return "UNKNOWN"
+    key = f"{sha}:{branch_sha(state, pr['baseRefName'])}"
+    seen = state.setdefault("mergeable_seen", [])
+    if key not in seen:  # GitHub computes it in the background after a push to either side
+        seen.append(key)
+        return "UNKNOWN"
+    return "CONFLICTING" if conflicting(state, pr) else "MERGEABLE"
+
+
+def pr_json(state: dict, pr: dict, args: list[str]) -> dict:
     sha = branch_sha(state, pr["headRefName"]) if pr["state"] == "OPEN" else pr["headRefOid"]
-    return {**pr, "headRefOid": sha}
+    item = {**pr, "headRefOid": sha}
+    if "mergeable" in (option(args, "--json") or "").split(","):
+        item["mergeable"] = mergeable(state, pr, sha)
+    return item
 
 
 def issues(state: dict, args: list[str]):
@@ -75,8 +106,12 @@ def issues(state: dict, args: list[str]):
     if verb == "create":
         taken = [int(number) for number in state["issues"]] + [pr["number"] for pr in state.get("prs", [])]
         number = max(taken, default=0) + 1
+        labels = [args[index + 1] for index, arg in enumerate(args) if arg == "--label"]
+        for name in labels:
+            if name not in state["labels"]:
+                raise SystemExit(f"could not add label: '{name}' not found")
         state["issues"][str(number)] = {"number": number, "title": option(args, "--title"), "body": option(args, "--body"),
-                                        "state": "OPEN", "labels": [], "comments": []}
+                                        "state": "OPEN", "labels": labels, "comments": []}
         return f"https://github.invalid/{state['_slug']}/issues/{number}"
     if verb == "comment":
         state["issues"][args[1]]["comments"].append(option(args, "--body"))
@@ -88,11 +123,11 @@ def pulls(state: dict, args: list[str]):
     verb = args[0]
     if verb == "list":
         head = option(args, "--head")
-        found = [pr_json(state, pr) for pr in state["prs"]
+        found = [pr_json(state, pr, args) for pr in state["prs"]
                  if pr["state"] == "OPEN" and (head is None or pr["headRefName"] == head)]
         return [fields(item, args) for item in found]
     if verb == "view":
-        return fields(pr_json(state, next(pr for pr in state["prs"] if str(pr["number"]) == args[1])), args)
+        return fields(pr_json(state, next(pr for pr in state["prs"] if str(pr["number"]) == args[1]), args), args)
     if verb == "create":
         head, base = option(args, "--head"), option(args, "--base")
         if branch_sha(state, head) is None:
@@ -112,12 +147,15 @@ def pulls(state: dict, args: list[str]):
         current = branch_sha(state, pr["headRefName"])
         if pr["state"] != "OPEN" or (expected and expected != current):
             raise SystemExit("merge refused: head commit does not match or PR is not open")
+        if conflicting(state, pr):
+            raise SystemExit(f"Pull request #{pr['number']} is not mergeable: the merge commit cannot be cleanly created.")
         with tempfile.TemporaryDirectory() as work:
             git("clone", "-q", "--branch", pr["baseRefName"], state["bare"], work)
             git("-c", "user.name=Fake GitHub", "-c", "user.email=fake@github.invalid", "merge", "--no-ff", "-q",
                 "-m", f"Merge pull request #{pr['number']}", f"origin/{pr['headRefName']}", cwd=work)
             git("push", "-q", "origin", f"HEAD:refs/heads/{pr['baseRefName']}", cwd=work)
-        pr.update(state="MERGED", headRefOid=current)
+            merged = git("rev-parse", "HEAD", cwd=work)
+        pr.update(state="MERGED", headRefOid=current, mergeCommit={"oid": merged})
         body = (pr.get("body") or "").lower()
         for number, issue in state["issues"].items():
             if f"closes #{number}" in body:
@@ -135,6 +173,12 @@ def api(state: dict, args: list[str]):
         return state["ci"].get("log", "2026-01-01T00:00:00.0000000Z \x1b[31mFAILED\x1b[0m tests/test_cli.py::test_ci_only")
     if len(parts) == 6 and parts[0] == "repos" and parts[3] == "commits" and parts[5] == "check-runs":
         sha = parts[4]
+        merges = [pr["mergeCommit"]["oid"] for pr in state["prs"] if pr.get("mergeCommit")]
+        if sha in merges:
+            return push_checks(state, sha, merges.index(sha))
+        if any(pr["state"] == "OPEN" and branch_sha(state, pr["headRefName"]) == sha and conflicting(state, pr)
+               for pr in state["prs"]):
+            return {"total_count": 0, "check_runs": []}  # GitHub runs no pull_request CI on a conflicting PR
         calls = state["check_calls"].get(sha, 0)
         state["check_calls"][sha] = calls + 1
         heads = state["ci"].setdefault("heads", [])
@@ -145,11 +189,44 @@ def api(state: dict, args: list[str]):
         outcome = script[min(calls, len(script) - 1)]
         if outcome == "missing":
             return {"total_count": 0, "check_runs": []}
-        return {"total_count": 1, "check_runs": [{
-            "id": calls + 1, "name": state["ci"]["check"], "head_sha": sha,
-            "status": "in_progress" if outcome == "pending" else "completed",
-            "conclusion": None if outcome == "pending" else outcome}]}
+        runs = [{"id": calls + 1, "name": state["ci"]["check"], "head_sha": sha,
+                 "status": "in_progress" if outcome == "pending" else "completed",
+                 "conclusion": None if outcome == "pending" else outcome}]
+        runs += [{"id": calls + 1, "name": name, "head_sha": sha, "status": "completed", "conclusion": "success"}
+                 for name in state["ci"].get("also", [])]
+        return {"total_count": len(runs), "check_runs": runs}
     raise SystemExit(f"fake gh: unsupported api path {path}")
+
+
+def push_checks(state: dict, sha: str, index: int) -> dict:
+    specs = state["ci"].get("push") or [{state["ci"]["check"]: ["success"]}]
+    spec = specs[min(index, len(specs) - 1)]
+    pushed = state.setdefault("push_runs", {}).setdefault(sha, {"run_id": 9000 + index, "jobs": {}})
+    runs = []
+    for position, (name, conclusions) in enumerate(spec.items()):
+        job = pushed["jobs"].setdefault(name, {"attempt": 0, "seen": 0})
+        running = job["seen"] == 0
+        job["seen"] += 1
+        job["conclusion"] = None if running else conclusions[min(job["attempt"], len(conclusions) - 1)]
+        job_id = pushed["run_id"] * 100 + position * 10 + job["attempt"]
+        runs.append({"id": job_id, "name": name, "head_sha": sha, "status": "in_progress" if running else "completed",
+                     "conclusion": job["conclusion"],
+                     "details_url": f"https://github.invalid/{state['repository']}/actions/runs/{pushed['run_id']}/job/{job_id}"})
+    return {"total_count": len(runs), "check_runs": runs}
+
+
+def rerun(state: dict, args: list[str]) -> None:
+    """`gh run rerun <run-id> --failed`: only completed, failed jobs start a new attempt."""
+    pushed = next((item for item in state.get("push_runs", {}).values() if str(item["run_id"]) == args[0]), None)
+    if pushed is None:
+        raise SystemExit(f"could not find any workflow run with ID {args[0]}")
+    if "--failed" not in args:
+        raise SystemExit("fake gh: only `gh run rerun --failed` is modelled")
+    failed = [job for job in pushed["jobs"].values() if job.get("conclusion") not in (None, "success", "skipped", "neutral")]
+    if not failed:
+        raise SystemExit(f"run {args[0]} has no failed jobs to rerun")
+    for job in failed:
+        job.update(attempt=job["attempt"] + 1, seen=0, conclusion=None)
 
 
 def main() -> None:
@@ -185,6 +262,8 @@ def main() -> None:
         result = pulls(state, args[1:])
     elif args[0] == "api":
         result = api(state, args[1:])
+    elif args[:2] == ["run", "rerun"]:
+        result = rerun(state, args[2:])
     else:
         raise SystemExit(f"fake gh: unsupported command {args}")
     scope.pop("_slug")

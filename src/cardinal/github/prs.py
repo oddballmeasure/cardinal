@@ -15,25 +15,29 @@ from cardinal.github.gh import GhError, gh, gh_json
 from cardinal.repo.git import remote_sha
 
 
-def check_state(repo: str, sha: str, required: list[str]) -> str:
-    """success | failure | pending for the required checks on one exact commit."""
+PASSED = {"success", "skipped", "neutral"}
+
+
+def latest_runs(repo: str, sha: str) -> dict[str, dict]:
+    """The newest check run of each name on one exact commit (a re-run adds a newer one)."""
+    latest: dict[str, dict] = {}
+    for run in gh_json("api", f"repos/{repo}/commits/{sha}/check-runs?per_page=100")["check_runs"]:
+        if run["head_sha"] == sha and (run["name"] not in latest or run["id"] > latest[run["name"]]["id"]):
+            latest[run["name"]] = run
+    return latest
+
+
+def check_state(repo: str, sha: str, required: list[str]) -> tuple[str, list[str]]:
+    """success | failure | pending for the required checks on one exact commit, and the ones that failed."""
     if not required:
-        return "success"
-    runs = gh_json("api", f"repos/{repo}/commits/{sha}/check-runs?per_page=100")["check_runs"]
-    states = []
-    for name in required:
-        matching = [run for run in runs if run["name"] == name and run["head_sha"] == sha]
-        if not matching:
-            states.append("pending")
-            continue
-        latest = max(matching, key=lambda run: run["id"])
-        if latest["status"] != "completed":
-            states.append("pending")
-        else:
-            states.append("success" if latest["conclusion"] in {"success", "skipped", "neutral"} else "failure")
-    if "failure" in states:
-        return "failure"
-    return "pending" if "pending" in states else "success"
+        return "success", []
+    latest = latest_runs(repo, sha)
+    failed = [name for name in required if name in latest and latest[name]["status"] == "completed"
+              and latest[name]["conclusion"] not in PASSED]
+    if failed:
+        return "failure", failed
+    done = all(name in latest and latest[name]["status"] == "completed" for name in required)
+    return ("success" if done else "pending"), []
 
 
 LOG_TAIL = 8000
@@ -41,26 +45,23 @@ STAMP = re.compile(r"^\S+Z ", re.MULTILINE)
 ESCAPES = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
 
-def failure_log(repo: str, sha: str, required: list[str]) -> str:
-    """The tail of each failed required check's log on one commit, as plain text a coder can read.
+def failure_log(repo: str, sha: str, names: list[str]) -> str:
+    """The tail of each named failed check's log on one commit, as plain text a coder can read.
     For GitHub Actions a check run's id is its job id; other checks only offer their summary."""
-    runs = gh_json("api", f"repos/{repo}/commits/{sha}/check-runs?per_page=100")["check_runs"]
+    latest = latest_runs(repo, sha)
     parts = []
-    for name in required:
-        matching = [run for run in runs if run["name"] == name and run["head_sha"] == sha]
-        if not matching:
-            continue
-        latest = max(matching, key=lambda run: run["id"])
-        if latest["conclusion"] in {"success", "skipped", "neutral"}:
+    for name in names:
+        run = latest.get(name)
+        if run is None or run["conclusion"] in PASSED:
             continue
         try:
-            text = gh("api", f"repos/{repo}/actions/jobs/{latest['id']}/logs", "--allow-escape-sequences", timeout=120)
+            text = gh("api", f"repos/{repo}/actions/jobs/{run['id']}/logs", "--allow-escape-sequences", timeout=120)
         except GhError:
-            output = latest.get("output") or {}
+            output = run.get("output") or {}
             text = "\n".join(filter(None, [output.get("summary"), output.get("text")])) or "(no log available)"
         text = ESCAPES.sub("", STAMP.sub("", text))
-        parts.append(f"Check `{name}` concluded {latest['conclusion']} on {sha[:12]}. Log tail:\n{text[-LOG_TAIL:]}")
-    return "\n\n".join(parts) or f"Required checks {required} failed on {sha[:12]}; no log was available."
+        parts.append(f"Check `{name}` concluded {run['conclusion']} on {sha[:12]}. Log tail:\n{text[-LOG_TAIL:]}")
+    return "\n\n".join(parts) or f"Checks {names} failed on {sha[:12]}; no log was available."
 
 
 class PRService:
@@ -78,6 +79,7 @@ class PRService:
         self.created = False
         self.merge_sha: str | None = None
         self.ci_observations: list[str] = []
+        self.failed_checks: list[str] = []
         self.events: list[dict] = []
         self.violations: list[str] = []
 
@@ -120,19 +122,27 @@ class PRService:
 
         @tool("wait_for_ci")
         def wait_for_ci(number: int) -> str:
-            """Wait until the required checks finish on the verified head. Returns success, failure or timeout."""
+            """Wait until the required checks finish on the verified head. Returns success, failure, conflict or timeout."""
             if number != self.number:
                 return self._violation(f"PR {number} is not this branch's PR")
             deadline = time.monotonic() + self.ci_timeout
             while True:
-                pr = gh_json("pr", "view", str(number), "-R", self.repo, "--json", "headRefOid,state")
+                pr = gh_json("pr", "view", str(number), "-R", self.repo, "--json", "headRefOid,state,mergeable")
                 if pr["headRefOid"] != self.head_sha or pr["state"] != "OPEN":
                     return self._violation("the PR head or state changed while waiting for CI")
-                status = check_state(self.repo, self.head_sha, self.required)
+                # GitHub runs no pull_request CI on a conflicting PR, so waiting could only time out.
+                if pr["mergeable"] == "CONFLICTING":
+                    self.ci_observations.append("conflict")
+                    self.events.append({"action": "ci", "status": "conflict"})
+                    return json.dumps({"status": "conflict", "head_sha": self.head_sha, "base": self.base})
+                status, self.failed_checks = check_state(self.repo, self.head_sha, self.required)
+                if status == "success" and pr["mergeable"] != "MERGEABLE":
+                    status = "pending"  # mergeable is computed lazily; UNKNOWN settles after a while
                 self.ci_observations.append(status)
-                self.events.append({"action": "ci", "status": status})
+                self.events.append({"action": "ci", "status": status, "mergeable": pr["mergeable"]})
                 if status != "pending":
-                    return json.dumps({"status": status, "head_sha": self.head_sha, "checks": self.required})
+                    return json.dumps({"status": status, "head_sha": self.head_sha, "checks": self.required,
+                                       "failed_checks": self.failed_checks})
                 if time.monotonic() >= deadline:
                     self.ci_observations.append("timeout")
                     return json.dumps({"status": "timeout", "head_sha": self.head_sha})

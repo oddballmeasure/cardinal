@@ -16,6 +16,9 @@ class RunState(TypedDict, total=False):
     ci_repair: list[str] | None   # failed required-check logs to resolve in the next implement round
     ci_round: int                 # CI repair rounds used so far
     verify_round: int
+    sync: dict | None             # {"conflicts": [paths]} or {"tests": summary} after merging a moved base
+    sync_round: int               # base merges used so far
+    resync: bool                  # GitHub reported the PR conflicting; merge the base again
     head_sha: str
     head_tests: dict              # CommandEvidence observed at head_sha
     verdict: dict

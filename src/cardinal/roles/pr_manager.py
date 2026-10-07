@@ -12,9 +12,17 @@ from cardinal.repo.git import remote_sha
 class CIFailed(StageFailure):
     """Required checks failed on the verified head. The runtime may send their log back to the coder."""
 
-    def __init__(self, detail: str, head_sha: str) -> None:
+    def __init__(self, detail: str, head_sha: str, failed: list[str]) -> None:
         super().__init__(FailureKind.CI_FAILED, detail)
         self.head_sha = head_sha
+        self.failed = failed
+
+
+class BaseConflict(StageFailure):
+    """The PR conflicts with its base. The runtime may merge the base in and verify again."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(FailureKind.BASE_CONFLICT, detail)
 
 
 def land(run: Run, verdict: Verdict) -> PRResult:
@@ -47,7 +55,10 @@ def land(run: Run, verdict: Verdict) -> PRResult:
         return result
     last = result.ci_observations[-1] if result.ci_observations else None
     if last == "failure":
-        raise CIFailed(f"Required checks {run.repo.required_checks} failed on {verdict.head_sha[:12]}", verdict.head_sha)
+        raise CIFailed(f"Required checks {service.failed_checks} failed on {verdict.head_sha[:12]}",
+                       verdict.head_sha, service.failed_checks)
+    if last == "conflict":
+        raise BaseConflict(f"PR #{result.number} conflicts with {run.repo.base_branch} at {verdict.head_sha[:12]}")
     if last == "timeout":
         raise StageFailure(FailureKind.CI_TIMEOUT, f"Required checks did not finish within {limits.ci_timeout_seconds}s")
     raise StageFailure(FailureKind.PR_VIOLATION, f"The PR manager stopped with the PR {result.status}")

@@ -1,6 +1,6 @@
 """`python -m cardinal_harness`: grade the Cardinal product from outside.
 
-  offline --scenario NAME              single | daemon | ci-failure | ci-repair | deploy | cleaner | monitor, all without network
+  offline --scenario NAME              single | daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge, offline
   live --suite PATH --model SPEC       the product's daemon against the live GitHub test repository
   propagate --model SPEC              an app error in the live test repo becomes an issue Cardinal fixes
   self-seed [--reseed]                 snapshot Cardinal into the self-test repository and file its issues
@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cardinal_harness")
     sub = parser.add_subparsers(dest="command", required=True)
     offline = sub.add_parser("offline")
-    offline.add_argument("--scenario", choices=["single", "daemon", "ci-failure", "ci-repair", "deploy", "cleaner", "monitor"], required=True)
+    offline.add_argument("--scenario", choices=["single", "daemon", "ci-failure", "ci-repair", "deploy", "cleaner", "monitor", "base-sync", "post-merge"], required=True)
     live = sub.add_parser("live")
     live.add_argument("--suite", type=Path, default=ROOT / "tests" / "fixtures" / "github_notes_suite.json")
     live.add_argument("--model", required=True)
