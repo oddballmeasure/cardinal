@@ -57,12 +57,16 @@ CREATE TABLE IF NOT EXISTS repo_profiles (
     updated_at TEXT NOT NULL
 );
 
--- INPUT. The claim lock: a row here means this process owns the issue until it settles.
+-- INPUT. The claim lock: a row here means this process owns the issue until it settles. host and
+-- pid name the owner, so the daemon can release a claim whose process was killed (store/db.py adds
+-- them to older stores).
 CREATE TABLE IF NOT EXISTS claims (
     repo TEXT NOT NULL,
     issue INTEGER NOT NULL,
     run_id TEXT NOT NULL,
     claimed_at TEXT NOT NULL,
+    host TEXT,
+    pid INTEGER,
     PRIMARY KEY (repo, issue)
 );
 

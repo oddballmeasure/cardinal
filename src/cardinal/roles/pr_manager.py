@@ -6,7 +6,6 @@ from cardinal.contracts.verdict import Verdict
 from cardinal.github.prs import PRService
 from cardinal.graph.context import Run
 from cardinal.graph.failures import FailureKind, StageFailure
-from cardinal.repo.git import remote_sha
 
 
 class CIFailed(StageFailure):
@@ -50,8 +49,6 @@ def land(run: Run, verdict: Verdict) -> PRResult:
     if service.violations:
         raise StageFailure(FailureKind.PR_VIOLATION, f"PR tools misused: {service.violations}")
     if result.status == "merged":
-        if result.merge_sha != remote_sha(run.clone, run.repo.base_branch):
-            raise StageFailure(FailureKind.GITHUB, "The recorded merge commit is not the base branch head")
         return result
     last = result.ci_observations[-1] if result.ci_observations else None
     if last == "failure":

@@ -81,6 +81,9 @@ class Repo(Strict):
     labels: Labels = Labels()
     deploy: Deploy | None = None
     retry_after_hours: float | None = Field(default=None, ge=24.0, description="None disables automatic retry")
+    max_parallel_runs: int = Field(default=1, ge=1, le=8, description=(
+        "Issues the daemon works at once, each in its own process. Planning stays one issue at a time; "
+        "every run executes test_command, so size this to the host"))
 
     @property
     def url(self) -> str:

@@ -52,6 +52,8 @@ required_checks = ["http-e2e"]                             # [] means merge with
 paths_off_limits = [".github/"]
 paths_hidden = []                                          # agents can neither see nor change these
 # retry_after_hours = 24   # requeue retryable failures after this long; omit to never retry
+# max_parallel_runs = 1    # issues the daemon works at once, one process each; planning stays serial.
+#                          # Sibling merges move the base more often: raise base_sync_rounds with it
 
 # Deploy after merge with the repository's committed deploy/deploy.sh and deploy/deploy.json.
 [repos.deploy]

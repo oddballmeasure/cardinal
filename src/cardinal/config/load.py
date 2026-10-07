@@ -46,4 +46,6 @@ test_command = ["python", "-m", "pytest", "-q", "tests"]
 required_checks = []
 paths_off_limits = [".github/"]
 paths_hidden = []
+# max_parallel_runs = 1  # issues the daemon works at once; more runs mean more base syncs, so
+#                        # consider raising [limits] base_sync_rounds with it
 """

@@ -7,16 +7,22 @@
 `base-sync`: other merges land on main while #11 and #12 are worked; conflicts and a clean move are
           merged in, resolved, verified again and merged.
 `post-merge`: checks that fail on merge commits are re-run once; a repeat failure files a follow-up.
+`parallel`: three workers: #11, #17 and #18 overlap, #12 waits for #11, planning never overlaps, and
+          #17 and #18 both append to the README, so the later merge brings in the earlier one.
+`worker-killed`: a run killed outright is settled as failed by the next daemon poll, then reruns.
 Every pass is judged from outside: fake-GitHub state, the bare remote's refs, `status --json`,
 and the independent acceptance tests in tests/acceptance.
 """
 
+import itertools
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from cardinal_harness import cleanup, fake_gh
@@ -37,6 +43,8 @@ ISSUES = {
     14: ("Add a total flag", "- R1: --total prints the sum of the selected amounts."),
     15: ("Archive transactions older than one year", "- R1: Move transactions dated over a year ago to an archive."),
     16: ("Summarise spending by merchant", "- R1: --by-merchant prints each merchant's total."),
+    17: ("Note the merchant filter in the README", "- R1: The README mentions --merchant."),
+    18: ("Note the input flag in the README", "- R1: The README mentions --input."),
 }
 ACCEPTANCE = {104: ["test_since_is_inclusive", "test_invalid_since_is_rejected", "test_csv_preserves_quoting_and_unicode",
                     "test_empty_csv_keeps_header", "test_since_and_csv_combine"]}
@@ -71,13 +79,15 @@ def world(temp: Path, ready: list[int], ci: list[str] | None = None,
 
 
 def configure(temp: Path, bare: Path, state_path: Path, artifact: Path, required_checks: list[str] | None = None,
-              env: dict[str, str] | None = None) -> Product:
+              env: dict[str, str] | None = None, max_parallel_runs: int | None = None,
+              limits: dict[str, int] | None = None) -> Product:
     home = temp / "home"
     write_config(home, models={role: "replay:scripted" for role in
                                ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor")},
                  slug=SLUG, remote_url=str(bare), test_command=[sys.executable, "-m", "pytest", "-q", "tests"],
                  required_checks=required_checks or [CHECK], paths_off_limits=[".github/"], deploy="local",
-                 limits={"coder_attempts": 2, "ci_poll_seconds": 1, "ci_timeout_seconds": 120})
+                 limits={"coder_attempts": 2, "ci_poll_seconds": 1, "ci_timeout_seconds": 120, **(limits or {})},
+                 max_parallel_runs=max_parallel_runs)
     fake_bin = fake_gh.install(temp / "bin")
     env = product_env({
         "PATH": f"{fake_bin.parent}{os.pathsep}{os.environ['PATH']}",
@@ -386,6 +396,104 @@ def post_merge(temp: Path, artifact: Path) -> dict:
     return {"checks": checks, "invocations": product.invocations}
 
 
+def lock_spans(home: Path, name: str) -> list[tuple[str, str, int]]:
+    """(acquired, released, pid) for each hold of one product lock, from the product's own log files."""
+    spans, open_at = [], {}
+    records = [json.loads(line) for path in sorted((home / "logs").glob("*.jsonl")) for line in path.read_text().splitlines()]
+    for record in sorted(records, key=lambda item: item["at"]):
+        if (record.get("data") or {}).get("lock") != name:
+            continue
+        pid = record["source"]["pid"]
+        if record["event"] == "lock_acquired":
+            open_at[pid] = record["at"]
+        elif record["event"] == "lock_released" and pid in open_at:
+            spans.append((open_at.pop(pid), record["at"], pid))
+    return spans
+
+
+def parallel(temp: Path, artifact: Path) -> dict:
+    """`daemon --once` with three workers and four ready issues. #12 builds on #11, so it waits for
+    #11's merge; #11, #17 and #18 run at once. #17 and #18 each append a line to the README, so
+    whichever merges second must bring in the other's line, through a sync before publishing or a
+    conflict GitHub reports while it waits for CI. Every merge moves main under the other runs."""
+    bare, state_path, _ = world(temp, ready=[11, 12, 17, 18])
+    product = configure(temp, bare, state_path, artifact, max_parallel_runs=3, limits={"base_sync_rounds": 4})
+    checks: dict = {}
+    code, results = product("daemon", "--once")
+    by_issue = {item["issue"]: item for item in results} if isinstance(results, list) else {}
+    expect(checks, "all four issues done", code == 0 and {n: by_issue.get(n, {}).get("status") for n in (11, 12, 17, 18)}
+           == {11: "done", 12: "done", 17: "done", 18: "done"}, results)
+    runs = {number: product.status(number)[-1] for number in (11, 12, 17, 18)}
+    windows = {number: (run["started_at"], run["ended_at"] or "") for number, run in runs.items()}
+    overlapping = [(a, b) for a in (11, 17, 18) for b in (11, 17, 18)
+                   if a < b and windows[a][0] < windows[b][1] and windows[b][0] < windows[a][1]]
+    expect(checks, "#11, #17 and #18 were worked at the same time", overlapping, windows)
+    expect(checks, "#12 started only after #11 settled, on top of #11's merge",
+           windows[12][0] >= windows[11][1] and subprocess.run(
+               ["git", "--git-dir", str(bare), "merge-base", "--is-ancestor", runs[11]["merge_sha"] or "", runs[12]["head_sha"] or ""],
+               capture_output=True, check=False).returncode == 0, windows)
+    spans = sorted(lock_spans(product.home, "intake"))
+    expect(checks, "planning held the intake lock one run at a time",
+           len({pid for _, _, pid in spans}) == 4 and all(later[0] >= earlier[1] for earlier, later in itertools.pairwise(spans)),
+           spans)
+    state = json.loads(state_path.read_text())
+    merges = {pr["headRefName"]: (pr.get("mergeCommit") or {}).get("oid") for pr in state["prs"]}
+    expect(checks, "each run recorded its own PR's merge commit, not whatever main was",
+           all(run["merge_sha"] and merges.get(run["branch"]) == run["merge_sha"] for run in runs.values())
+           and len(set(merges.values())) == 4, {"prs": merges, "runs": {n: (r["branch"], r["merge_sha"]) for n, r in runs.items()}})
+    synced = {number: [event["data"] for event in product.status(number)[-1].get("events", [])
+                       if event["stage"] == "sync" and event["kind"] == "merged"] for number in (11, 17, 18)}
+    expect(checks, "runs merged in main as it moved under them", any(synced.values()), synced)
+    checkout = temp / "final"
+    subprocess.run(["git", "clone", "-q", str(bare), str(checkout)], check=True)
+    readme = (checkout / "README.md").read_text()
+    suite = subprocess.run([sys.executable, "-m", "pytest", "-q", "tests", "-p", "no:cacheprovider"], cwd=checkout,
+                           text=True, capture_output=True, check=False, timeout=600)
+    expect(checks, "main keeps both README lines and passes its tests",
+           all(f"{ISSUES[n][0]}.\n" in readme for n in (17, 18)) and suite.returncode == 0,
+           {"readme": readme[-400:], "suite": suite.stdout[-1500:]})
+    code, again = product("daemon", "--once")
+    expect(checks, "a second drain claims nothing", code == 0 and again == [], again)
+    product.keep_store()
+    json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
+    return {"checks": checks, "invocations": product.invocations}
+
+
+def worker_killed(temp: Path, artifact: Path) -> dict:
+    """A run killed outright (SIGKILL, as the OOM killer would) never releases its claim. The next
+    daemon poll settles it as failed and labels it; requeued, the issue runs again to done."""
+    bare, state_path, _ = world(temp, ready=[17])
+    product = configure(temp, bare, state_path, artifact, max_parallel_runs=2)
+    checks: dict = {}
+    command = [sys.executable, "-m", "cardinal.cli.main", "--home", str(product.home), "run", "17"]
+    victim = subprocess.Popen(command, env=product.env, start_new_session=True,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 120
+    # Once its worktree exists, so the kill lands mid-run rather than inside the first clone.
+    while time.monotonic() < deadline and not any(run["status"] == "running" and run["branch"] for run in product.status(17)):
+        time.sleep(0.2)
+    os.killpg(victim.pid, signal.SIGKILL)
+    victim.wait()
+    killed = product.status(17)
+    expect(checks, "the run was killed while running", [run["status"] for run in killed] == ["running"], killed)
+    code, results = product("daemon", "--once")
+    failure = ((results or [{}])[0].get("failure") or {}) if isinstance(results, list) else {}
+    expect(checks, "the next poll settles it as an abandoned crash", code == 1 and len(results) == 1
+           and failure.get("stage") == "abandoned" and failure.get("kind") == "crash", results)
+    state = json.loads(state_path.read_text())
+    issue = state["issues"]["17"]
+    expect(checks, "the issue is labelled error and told why", issue["labels"] == ["cardinal:error"]
+           and any("abandoned" in comment for comment in issue["comments"]), issue)
+    state["issues"]["17"]["labels"] = ["cardinal:ready"]  # a person puts it back in the queue
+    json_file(state_path, state)
+    code, rerun = product("daemon", "--once")
+    expect(checks, "requeued, it runs again to done", code == 0 and isinstance(rerun, list)
+           and [item.get("status") for item in rerun] == ["done"] and len(product.status(17)) == 2, rerun)
+    product.keep_store()
+    json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
+    return {"checks": checks, "invocations": product.invocations}
+
+
 def deploy(temp: Path, artifact: Path) -> dict:
     """Deploy layouts and failures after a real merge: a root-level pair deploys; a script that exits
     nonzero, health that never matches, and an ambiguous layout all fail without a deployed revision."""
@@ -437,7 +545,8 @@ def monitor(temp: Path, artifact: Path) -> dict:
 
 
 SCENARIOS = {"single": single, "daemon": daemon, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
-             "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge}
+             "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
+             "parallel": parallel, "worker-killed": worker_killed}
 
 
 def run(scenario: str, artifact: Path) -> dict:

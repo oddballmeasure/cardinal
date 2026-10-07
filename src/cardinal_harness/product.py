@@ -31,7 +31,8 @@ def toml_list(items: list[str]) -> str:
 def write_config(home: Path, *, models: dict[str, str], slug: str, remote_url: str, test_command: list[str],
                  required_checks: list[str], paths_off_limits: list[str], deploy: str | None,
                  limits: dict[str, int] | None = None, source_repo: str = "oddballmeasure/cardinal",
-                 sections: dict[str, dict] | None = None, extra_repos: list[str] | None = None) -> Path:
+                 sections: dict[str, dict] | None = None, extra_repos: list[str] | None = None,
+                 max_parallel_runs: int | None = None) -> Path:
     home.mkdir(parents=True, exist_ok=True)
     lines = ["[models]", *(f"{role} = {json.dumps(spec)}" for role, spec in models.items()), "",
              "[logging]", 'level = "info"', f"source_repo = {json.dumps(source_repo)}", ""]
@@ -43,6 +44,8 @@ def write_config(home: Path, *, models: dict[str, str], slug: str, remote_url: s
               'base_branch = "main"', f"test_command = {toml_list(test_command)}",
               f"required_checks = {toml_list(required_checks)}", f"paths_off_limits = {toml_list(paths_off_limits)}",
               "paths_hidden = []"]  # graded targets never contain their own grader
+    if max_parallel_runs is not None:
+        lines.append(f"max_parallel_runs = {max_parallel_runs}")
     if deploy:
         lines += ["", "[repos.deploy]", f"transport = {json.dumps(deploy)}", 'local_directory = "deploy-host"']
     lines += extra_repos or []

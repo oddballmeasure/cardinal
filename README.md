@@ -132,6 +132,7 @@ profile → intake ─┬─ needs a person → pause (cardinal resume) → inta
 - **Sync.** Before publishing, the latest base branch is merged into the verified branch if it moved. A clean merge is tested and goes back to the verifier, whose diff now starts at the new base; a conflict (left in progress, with its markers) or a failing test goes to implement as a `SYNC` ticket, whose commit completes the merge and is refused while markers remain. At most `base_sync_rounds` merges per run; a conflict after that fails as `base_conflict`.
 - **PR.** The branch is pushed with a lease. The PR merges only after every `required_checks` check passes on the verified head. GitHub runs no `pull_request` CI on a conflicting PR, so a PR whose `mergeable` turns `CONFLICTING` while waiting goes straight back to sync instead of waiting out `ci_timeout_seconds`. A CI failure names only the required checks that failed.
 - **After the merge.** On each poll the daemon reads every check on each merge commit it made, not only the required ones. A failure is re-run once (`gh run rerun --failed`); if it fails again, Cardinal files one issue, `CI failed on <base> after #<pr>: <checks>`, with the log tails, labelled `cardinal:ready`. A follow-up whose own merge fails again is labelled `cardinal:needs-human` instead. Judgements are kept in the store, so a restart never re-files, and a merge still unjudged after six hours is given up.
+- **Parallel runs.** With `max_parallel_runs` above 1 on a repository, the daemon starts each ready issue as its own `cardinal run N` process, up to that many at once. Planning (profile and intake) still takes one issue at a time, under a file lock beside the shared clone; coding, verifying, CI waits and syncs overlap, and merges take turns under a second lock that re-checks mergeability right before merging. An issue whose body says it `depends on`, `builds on`, `requires` or is `blocked by` another issue still running or queued waits for it. A run's process killed outright (SIGKILL, out of memory) is settled as failed by the next poll, which releases its claim. Each sibling merge moves the base under the others, so raise `base_sync_rounds` along with it.
 - **Labels.** Labels form one state axis: `cardinal:ready`, `in-progress`, `done`, `error`, `needs-human` and `investigate`. A failure records a typed `FailureKind`. Retryable failures are re-queued after `retry_after_hours` (at least 24) only when that setting is present.
 
 Agents have no shell. The worktree is the only writable mount. Within it, `.git`, vendor
@@ -142,7 +143,7 @@ read-only.
 
 ```sh
 uv run --locked python -m pytest -q                              # offline scenarios, no network
-uv run --locked python -m cardinal_harness offline --scenario single      # or daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge
+uv run --locked python -m cardinal_harness offline --scenario single      # or daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge | parallel | worker-killed
 uv run --locked --extra openai --extra e2e python -m cardinal_harness live --model openai:gpt-6-sol
 ```
 

@@ -67,6 +67,19 @@ def test_checks_failing_after_merge_are_rerun_once_then_filed_without_looping():
     assert len(report["checks"]) == 7
 
 
+def test_parallel_workers_plan_one_at_a_time_and_land_sibling_merges():
+    """Three workers: #11, #17 and #18 overlap while #12 waits for #11, which it builds on. Planning
+    holds the intake lock one run at a time; #17 and #18 edit the same file, so the later merge
+    brings in the earlier one; each run records its own PR's merge commit."""
+    report = harness("offline", "--scenario", "parallel", timeout=1500)
+    assert len(report["checks"]) == 8
+
+
+def test_a_killed_worker_is_settled_by_the_next_poll_and_reruns():
+    report = harness("offline", "--scenario", "worker-killed", timeout=900)
+    assert len(report["checks"]) == 4
+
+
 def test_ci_failure_log_goes_back_to_the_coder_and_the_repaired_head_merges():
     """CI fails on the first pushed head; the coder gets the job log, the verifier rechecks, and the
     same PR merges the repaired head once CI passes on it."""

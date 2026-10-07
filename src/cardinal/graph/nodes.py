@@ -20,6 +20,7 @@ from cardinal.graph import runtime
 from cardinal.graph.context import Run
 from cardinal.graph.failures import FailureKind, StageFailure
 from cardinal.graph.state import RunState
+from cardinal.locks import lock
 from cardinal.logs.context import bind
 from cardinal.repo.git import GitError, create_worktree, ensure_clone, publish
 from cardinal.roles import deployer, orchestrator, pr_manager, profiler, verifier
@@ -55,23 +56,27 @@ def guarded(stage: str):
     return decorate
 
 
+# Profile and intake each hold the repository's intake lock: parallel runs plan one issue at a time,
+# and the one shared repo profile is never rewritten by two runs at once.
 @guarded("profile")
 def profile_node(state: RunState, run: Run) -> dict:
-    ensure_clone(run.clone, run.repo.url, run.repo.base_branch)
-    base_sha = state.get("base_sha")
-    if not run.worktree.exists():
-        base_sha = create_worktree(run.clone, run.worktree, run.branch, run.repo.base_branch)
-        runs.update(run.db, run.run_id, branch=run.branch)
-    result = profiler.profile(run)
+    with lock(run.clone, "intake"):
+        ensure_clone(run.clone, run.repo.url, run.repo.base_branch)
+        base_sha = state.get("base_sha")
+        if not run.worktree.exists():
+            base_sha = create_worktree(run.clone, run.worktree, run.branch, run.repo.base_branch)
+            runs.update(run.db, run.run_id, branch=run.branch)
+        result = profiler.profile(run)
     return {"status": "running", "base_sha": base_sha, "profile_revision": result.revision}
 
 
 @guarded("intake")
 def intake_node(state: RunState, run: Run) -> dict:
-    profile = inputs.load_profile(run.db, run.repo.slug)
-    if profile is None:
-        raise StageFailure(FailureKind.CRASH, "The profile vanished between profiling and intake")
-    decision, tickets = orchestrator.intake(run, profile, state.get("human_answer"))
+    with lock(run.clone, "intake"):
+        profile = inputs.load_profile(run.db, run.repo.slug)
+        if profile is None:
+            raise StageFailure(FailureKind.CRASH, "The profile vanished between profiling and intake")
+        decision, tickets = orchestrator.intake(run, profile, state.get("human_answer"))
     update = {"decision": decision.model_dump(), "tickets": [ticket.model_dump() for ticket in tickets]}
     if decision.kind == "needs_human":
         return {**update, "status": "awaiting_human", "question": decision.reason}
@@ -133,7 +138,7 @@ def sync_node(state: RunState, run: Run) -> dict:
 
 @guarded("publish")
 def publish_node(state: RunState, run: Run) -> dict:
-    pushed = publish(run.worktree, run.branch)
+    pushed = publish(run.clone, run.worktree, run.branch)
     if pushed != state["verdict"]["head_sha"]:
         raise StageFailure(FailureKind.GIT, f"Pushed {pushed}, but the verdict covers {state['verdict']['head_sha']}")
     return {}

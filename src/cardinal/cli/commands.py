@@ -65,10 +65,10 @@ def route(args, home: Home, config, db, sink):
         return finish(app.resume(home, config, repo, db, args.issue, action, args.note))
     if args.command == "daemon":
         if args.once:
-            results = loop.drain(home, config, repo, db)
+            results = loop.drain(home, config, repo, db, args.verbose)
             failed = any(item["status"] == "failed" for item in results)
             return print_and(results, 1 if failed else 0)
-        loop.serve(home, config, repo, db, args.interval)
+        loop.serve(home, config, repo, db, args.interval, args.verbose)
     raise ValueError(f"Unknown command {args.command}")
 
 

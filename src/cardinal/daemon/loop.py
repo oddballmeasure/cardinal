@@ -1,4 +1,5 @@
-"""Poll one repository for ready issues and run them one at a time, in issue-number order."""
+"""Poll one repository for ready issues and run them in issue-number order: one at a time in this
+process, or up to max_parallel_runs at once as worker processes (daemon/workers.py)."""
 
 import logging
 import sqlite3
@@ -7,11 +8,11 @@ from datetime import UTC, datetime, timedelta
 
 from cardinal import app
 from cardinal.config.models import Config, Repo
-from cardinal.daemon import post_merge
+from cardinal.daemon import post_merge, workers
 from cardinal.github import issues
 from cardinal.graph.failures import FailureKind
 from cardinal.home import Home
-from cardinal.store import runs
+from cardinal.store import inputs, runs
 
 log = logging.getLogger(__name__)
 
@@ -35,16 +36,19 @@ def retry_sweep(repo: Repo, db: sqlite3.Connection) -> list[int]:
     return requeued
 
 
-def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection) -> list[dict]:
+def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, verbose: int = 0) -> list[dict]:
     """Run every ready issue, re-polling after each so work labelled meanwhile (including a follow-up
     filed for a failed merge) is included. CI on earlier merges is judged before each claim: a queue of
     hour-long runs would otherwise leave a merge unjudged until it expired."""
     issues.ensure_labels(repo.slug, repo.labels)
+    # A run killed outright (SIGKILL, out of memory) never releases its claim; settle it as failed.
+    results: list[dict] = [app.abandon(repo, db, claim) for claim in inputs.orphaned_claims(db, repo.slug)]
     requeued = retry_sweep(repo, db)
     if requeued:
         log.info("requeued %s after their retry window", requeued, extra={"event": "retry_requeued",
                                                                            "data": {"issues": requeued}})
-    results: list[dict] = []
+    if repo.max_parallel_runs > 1:
+        return results + workers.parallel(home, repo, db, verbose)
     attempted: set[int] = set()
     while True:
         post_merge.judge_all(repo, db)
@@ -61,10 +65,10 @@ def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection) -> lis
             results.append({"issue": number, "status": "skipped", "reason": str(exc)})
 
 
-def serve(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, interval: int) -> None:
+def serve(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, interval: int, verbose: int = 0) -> None:
     while True:
         try:
-            for result in drain(home, config, repo, db):
+            for result in drain(home, config, repo, db, verbose):
                 log.info("issue #%s settled %s", result["issue"], result["status"])
         except Exception:  # noqa: BLE001 - one failed poll (GitHub down, store locked) must not end the daemon
             log.exception("daemon poll failed; retrying in %ss", interval, extra={"event": "daemon_poll_failed"})

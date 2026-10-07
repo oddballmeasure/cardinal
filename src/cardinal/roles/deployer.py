@@ -7,14 +7,14 @@ from cardinal.deploy.hosts import host_for
 from cardinal.deploy.service import DeploymentService
 from cardinal.graph.context import Run
 from cardinal.graph.failures import FailureKind, StageFailure
-from cardinal.repo.git import git
+from cardinal.repo.git import fetch_base
 
 
 def deploy(run: Run, merge_sha: str) -> DeploymentResult:
     settings = run.repo.deploy
     if settings is None:
         raise ValueError("deploy called for a repository without deploy configuration")
-    git(run.clone, "fetch", "-q", "origin", run.repo.base_branch, timeout=600)
+    fetch_base(run.clone, run.clone, run.repo.base_branch)
     try:
         script_path, script, config_bytes, config = committed_deployment(run.clone, merge_sha)
     except ValueError as exc:

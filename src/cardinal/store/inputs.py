@@ -1,6 +1,8 @@
 """State Cardinal acts on. These writes raise: silently losing one would re-claim or re-pay."""
 
 import json
+import os
+import socket
 import sqlite3
 
 from cardinal.contracts.profile import RepoProfile
@@ -25,10 +27,28 @@ def save_profile(db: sqlite3.Connection, profile: RepoProfile) -> None:
 def claim(db: sqlite3.Connection, repo: str, issue: int, run_id: str) -> bool:
     """True only for the caller that inserted the row; a held claim is never taken over."""
     cursor = db.execute(
-        "INSERT OR IGNORE INTO claims (repo, issue, run_id, claimed_at) VALUES (?, ?, ?, ?)",
-        (repo, issue, run_id, now()),
+        "INSERT OR IGNORE INTO claims (repo, issue, run_id, claimed_at, host, pid) VALUES (?, ?, ?, ?, ?, ?)",
+        (repo, issue, run_id, now(), socket.gethostname(), os.getpid()),
     )
     return cursor.rowcount == 1
+
+
+def orphaned_claims(db: sqlite3.Connection, repo: str) -> list[sqlite3.Row]:
+    """Claims held by a process on this host that no longer exists (killed, out of memory): nothing
+    will ever release them. Claims from other hosts, or from before owners were recorded, are left."""
+    rows = db.execute("SELECT * FROM claims WHERE repo = ? AND host = ? AND pid IS NOT NULL",
+                      (repo, socket.gethostname())).fetchall()
+    return [row for row in rows if not alive(row["pid"])]
+
+
+def alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def release(db: sqlite3.Connection, repo: str, issue: int) -> None:

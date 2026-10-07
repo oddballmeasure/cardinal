@@ -79,6 +79,13 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [ ] Live: not exercised against real GitHub yet: `mergeable` timing, `gh run rerun --failed`, run ids parsed from check runs' `details_url`, check runs listed after a re-run
 - [ ] Live suite shares one home across cases and the test repo runs `http-e2e` on push to main, so a merge failing twice there files a ready follow-up that a later case's `daemon --once` would work. Decide whether the suite should tolerate, park or disable that
 
+## Phase 11 — several issues at once
+- [x] `max_parallel_runs` (default 1, serial as before): the daemon runs each ready issue as a `cardinal run N` worker process; profile and intake hold the `intake` lock, shared-clone git writes the `git` lock, merges the `merge` lock with mergeability re-checked under it (lessons/parallel-runs-share-the-clone.md). Offline `parallel` 8/8: #11, #17, #18 overlapped, #12 waited for #11, #18's PR turned CONFLICTING after #17 merged and landed through SYNC-1
+- [x] merge_sha from the PR's `mergeCommit`, not the base head
+- [x] Claims record host and pid; the daemon settles claims of dead processes as `abandoned` crashes. Offline `worker-killed` 4/4
+- [ ] Live: parallel runs against real GitHub and koizler's real `test_command` load (koizler#25 says vitest is load-sensitive)
+- [ ] Branch protection that requires up-to-date branches would refuse sibling merges; Cardinal does not handle that
+
 ## Discovered along the way
 - [x] Killed daemon left its test process group (and hung docker helpers) running: run_repo_tests now kills its group on any interruption; SIGTERM unwinds and settles the run as interrupted
 - [x] Live grader crashed querying checks for an unpushed commit, and ran Docker acceptance for runs that never merged: both fixed

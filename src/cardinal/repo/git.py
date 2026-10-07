@@ -1,4 +1,7 @@
-"""Git operations on the shared clone and per-issue worktrees. Every call raises on failure."""
+"""Git operations on the shared clone and per-issue worktrees. Every call raises on failure.
+
+Parallel runs share the clone's refs and worktree list, so every call that writes them holds the
+clone's `git` lock (cardinal/locks.py). Work inside one worktree needs no lock."""
 
 import hashlib
 import os
@@ -7,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 import cardinal
+from cardinal.locks import lock
 
 PRODUCT_ROOT = Path(cardinal.__file__).resolve().parents[2]
 IDENTITY = ["-c", "user.name=Cardinal", "-c", "user.email=cardinal@users.noreply.github.com"]
@@ -46,6 +50,11 @@ def guard_target(url: str) -> None:
 
 def ensure_clone(clone: Path, url: str, base: str) -> Path:
     guard_target(url)
+    with lock(clone, "git"):
+        return _ensure_clone(clone, url, base)
+
+
+def _ensure_clone(clone: Path, url: str, base: str) -> Path:
     if not (clone / ".git").exists():
         clone.parent.mkdir(parents=True, exist_ok=True)
         git(clone.parent, "clone", "-q", "--no-checkout", url, str(clone), timeout=600)
@@ -63,13 +72,20 @@ def remote_sha(clone: Path, branch: str) -> str | None:
 
 def create_worktree(clone: Path, path: Path, branch: str, base: str) -> str:
     """Cut the branch from a freshly fetched base. Returns the base commit it started from."""
-    git(clone, "fetch", "-q", "origin", base, timeout=600)
-    base_sha = git(clone, "rev-parse", f"refs/remotes/origin/{base}").strip()
-    for stale in worktrees_on(clone, branch):  # a failed earlier run of this issue keeps its worktree
-        remove_worktree(clone, stale)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    git(clone, "worktree", "add", "-q", "-B", branch, str(path), base_sha)
+    with lock(clone, "git"):
+        base_sha = fetch_base(clone, clone, base)
+        for stale in worktrees_on(clone, branch):  # a failed earlier run of this issue keeps its worktree
+            remove_worktree(clone, stale)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        git(clone, "worktree", "add", "-q", "-B", branch, str(path), base_sha)
     return base_sha
+
+
+def fetch_base(clone: Path, repo: Path, base: str) -> str:
+    """Fetch the base branch from `repo` (the clone or one of its worktrees); returns its newest commit."""
+    with lock(clone, "git"):
+        git(repo, "fetch", "-q", "origin", base, timeout=600)
+        return git(repo, "rev-parse", f"refs/remotes/origin/{base}").strip()
 
 
 def worktrees_on(clone: Path, branch: str) -> list[Path]:
@@ -83,9 +99,10 @@ def worktrees_on(clone: Path, branch: str) -> list[Path]:
 
 
 def remove_worktree(clone: Path, path: Path) -> None:
-    if path.exists():
-        git(clone, "worktree", "remove", "--force", str(path))
-    git(clone, "worktree", "prune")
+    with lock(clone, "git"):
+        if path.exists():
+            git(clone, "worktree", "remove", "--force", str(path))
+        git(clone, "worktree", "prune")
 
 
 def head(worktree: Path) -> str:
@@ -116,8 +133,13 @@ def patch(worktree: Path, base_sha: str) -> str:
     return git(worktree, "diff", "--binary", base_sha)
 
 
-def publish(worktree: Path, branch: str) -> str:
+def publish(clone: Path, worktree: Path, branch: str) -> str:
     """Push the branch. Overwrite a previous managed push only under an exact lease."""
+    with lock(clone, "git"):  # the push updates the clone's remote-tracking refs
+        return _publish(worktree, branch)
+
+
+def _publish(worktree: Path, branch: str) -> str:
     sha = head(worktree)
     previous = remote_sha(worktree, branch)
     if previous is None:

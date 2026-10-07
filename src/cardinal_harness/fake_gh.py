@@ -17,10 +17,13 @@ State lives in the JSON file named by CARDINAL_FAKE_GH_STATE:
   listed, and `gh run rerun --failed` starts the next attempt of each failed job.
   other_repos{slug: {issues, labels}}: further repositories that hold only issues and labels
 
+Calls are atomic, as on GitHub: parallel workers' calls are serialised on a lock beside the state.
+
 Like GitHub, `mergeable` is computed from the real refs (`git merge-tree`) and reads UNKNOWN the first
 time a head/base pair is asked about; a conflicting PR runs no pull_request CI and cannot be merged.
 """
 
+import fcntl
 import json
 import os
 import subprocess
@@ -231,6 +234,12 @@ def rerun(state: dict, args: list[str]) -> None:
 
 def main() -> None:
     path = Path(os.environ["CARDINAL_FAKE_GH_STATE"])
+    with open(f"{path}.lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        serve(path)
+
+
+def serve(path: Path) -> None:
     state = json.loads(path.read_text())
     args = sys.argv[1:]
     scope = state

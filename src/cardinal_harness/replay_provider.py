@@ -193,6 +193,11 @@ def decision_for(context: dict) -> IntakeDecision:
             task="Make the failing check pass at its cause.", acceptance_criteria=["The check passes"], covers=["R1"],
             depends_on=[], target_files=["tests/test_cli.py"])], **{**common, "requirements": [
                 Requirement(id="R1", text="The check that failed after the merge passes on main")]})
+    if title.startswith("Note "):  # parallel scenario: each appends one line to the README
+        return IntakeDecision(kind="chore", reason="One README line", tickets=[Ticket(
+            id=f"NOTE-{number}", source_issue=number, title=title, task="Append the line to README.md.",
+            acceptance_criteria=["README.md ends with the line"], covers=["R1"], depends_on=[],
+            target_files=["README.md"])], **{**common, "requirements": [Requirement(id="R1", text=title)]})
     if title.startswith("Add a total flag"):
         return IntakeDecision(kind="feature", reason="One CLI flag", tickets=[Ticket(
             id="TOTAL", source_issue=number, title="Print a total", task="Add --total printing the amount sum.",
@@ -279,7 +284,17 @@ def resolve_conflicts(context: dict) -> dict[str, str]:
 
 def coder(context: dict, title: str):
     ticket_id = context["ticket"]["id"]
-    writes = resolve_conflicts(context) if ticket_id.startswith("SYNC-") else writes_for(ticket_id)
+    if ticket_id.startswith("SYNC-"):
+        writes = resolve_conflicts(context)
+    elif ticket_id.startswith("NOTE-"):
+        readme = Path(context["worktree"]) / "README.md"
+        number = context["issue"]["number"]
+        writes = {"README.md": readme.read_text() + f"{title}.\n", f"tests/test_note_{number}.py": (
+            "from pathlib import Path\n\n\n"
+            f"def test_readme_notes_issue_{number}() -> None:\n"
+            f"    assert {title + '.'!r} in Path('README.md').read_text().splitlines()\n")}
+    else:
+        writes = writes_for(ticket_id)
     return Scripted(messages=iter([
         call("read_file", {"file_path": "/skills/coder/SKILL.md"}, "skill"),
         call("read_file", {"file_path": "/context/ticket.json"}, "ticket"),

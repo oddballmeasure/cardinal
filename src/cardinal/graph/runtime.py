@@ -10,8 +10,8 @@ from cardinal.contracts.evidence import CommandEvidence
 from cardinal.contracts.intake import IntakeDecision, Ticket
 from cardinal.graph.context import Run
 from cardinal.graph.failures import FailureKind, StageFailure
-from cardinal.repo.git import (commit_all, dirty, fingerprint, git, head, is_ancestor, merge, reset_to, ticket_commits,
-                               unresolved, would_conflict)
+from cardinal.repo.git import (commit_all, dirty, fetch_base, fingerprint, head, is_ancestor, merge, reset_to,
+                               ticket_commits, unresolved, would_conflict)
 from cardinal.roles import coder
 from cardinal.roles.tests import run_repo_tests, summary
 
@@ -67,8 +67,7 @@ def sync_base(run: Run, state: dict) -> dict:
     and verified again; a conflict or a failing test goes back to implement as a SYNC ticket. Only a
     conflict left after base_sync_rounds merges fails the run."""
     base, rounds = run.repo.base_branch, state.get("sync_round", 0)
-    git(run.worktree, "fetch", "-q", "origin", base, timeout=600)
-    newest = git(run.worktree, "rev-parse", f"refs/remotes/origin/{base}").strip()
+    newest = fetch_base(run.clone, run.worktree, base)
     if is_ancestor(run.worktree, newest, "HEAD"):
         if state.get("resync"):
             raise StageFailure(FailureKind.BASE_CONFLICT, f"GitHub reports a conflict, but the branch already contains {base}")
@@ -94,8 +93,7 @@ def fresh_base(run: Run, base_sha: str) -> str:
     """With nothing accepted yet, restart from the newest base so merges since profiling are included."""
     if ticket_commits(run.worktree, base_sha):
         return base_sha
-    git(run.worktree, "fetch", "-q", "origin", run.repo.base_branch, timeout=600)
-    newest = git(run.worktree, "rev-parse", f"refs/remotes/origin/{run.repo.base_branch}").strip()
+    newest = fetch_base(run.clone, run.worktree, run.repo.base_branch)
     reset_to(run.worktree, newest)
     return newest
 

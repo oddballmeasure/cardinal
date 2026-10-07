@@ -12,7 +12,7 @@ from langchain_core.tools import tool
 from cardinal.contracts.pr import PRResult
 from cardinal.contracts.verdict import Verdict
 from cardinal.github.gh import GhError, gh, gh_json
-from cardinal.repo.git import remote_sha
+from cardinal.locks import lock
 
 
 PASSED = {"success", "skipped", "neutral"}
@@ -155,9 +155,31 @@ class PRService:
                 return self._violation(f"PR {number} is not this branch's PR")
             if not self.ci_observations or self.ci_observations[-1] != "success":
                 return self._violation("merge requested without successful CI on the verified head")
-            gh("pr", "merge", str(number), "-R", self.repo, "--merge",
-               "--match-head-commit", self.head_sha, timeout=180)
-            self.merge_sha = remote_sha(self.clone, self.base)
+            # One merge at a time per repository: a sibling run's merge may have made this PR conflict
+            # since its CI passed, so mergeability is judged again under the lock, right before merging.
+            with lock(self.clone, "merge"):
+                deadline = time.monotonic() + self.ci_timeout
+                while True:
+                    pr = gh_json("pr", "view", str(number), "-R", self.repo, "--json", "headRefOid,state,mergeable")
+                    if pr["headRefOid"] != self.head_sha or pr["state"] != "OPEN":
+                        return self._violation("the PR head or state changed before merging")
+                    if pr["mergeable"] == "CONFLICTING":
+                        self.ci_observations.append("conflict")
+                        self.events.append({"action": "merge", "number": number, "status": "conflict"})
+                        return json.dumps({"merged": False, "status": "conflict", "base": self.base})
+                    if pr["mergeable"] == "MERGEABLE":
+                        break
+                    if time.monotonic() >= deadline:
+                        self.ci_observations.append("timeout")
+                        return json.dumps({"merged": False, "status": "timeout"})
+                    time.sleep(self.poll_seconds)
+                gh("pr", "merge", str(number), "-R", self.repo, "--merge",
+                   "--match-head-commit", self.head_sha, timeout=180)
+                # The PR's own merge commit: the base head may already be a sibling's later merge.
+                merged = gh_json("pr", "view", str(number), "-R", self.repo, "--json", "state,mergeCommit")
+            if merged["state"] != "MERGED" or not (merged.get("mergeCommit") or {}).get("oid"):
+                raise GhError(f"PR {number} reports {merged['state']} without a merge commit after merging")
+            self.merge_sha = merged["mergeCommit"]["oid"]
             self.events.append({"action": "merge", "number": number, "merge_sha": self.merge_sha})
             return json.dumps({"merged": True, "merge_sha": self.merge_sha})
 

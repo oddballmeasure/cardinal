@@ -15,6 +15,7 @@ from cardinal.graph.builder import build
 from cardinal.graph.context import Run
 from cardinal.graph.failures import FailureKind
 from cardinal.home import Home
+from cardinal.locks import lock
 from cardinal.logs.context import bind
 from cardinal.repo.git import create_worktree, ensure_clone, remove_worktree
 from cardinal.roles import orchestrator, profiler
@@ -83,9 +84,10 @@ def triage(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, numbe
     kind, reason = None, ""
     with bind(run_id=run_id, issue=number, stage="triage"):
         try:
-            ensure_clone(run.clone, repo.url, repo.base_branch)
-            create_worktree(run.clone, run.worktree, run.branch, repo.base_branch)
-            decision, _ = orchestrator.intake(run, profiler.profile(run), None)
+            with lock(run.clone, "intake"):
+                ensure_clone(run.clone, repo.url, repo.base_branch)
+                create_worktree(run.clone, run.worktree, run.branch, repo.base_branch)
+                decision, _ = orchestrator.intake(run, profiler.profile(run), None)
             kind, reason = decision.kind, decision.reason
         except Exception as exc:  # noqa: BLE001 - a failed triage parks the issue for investigation
             log.error("triage of #%s failed", number, exc_info=exc, extra={"event": "triage_failed"})
@@ -100,6 +102,24 @@ def triage(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, numbe
             issues.comment(repo.slug, number, f"Cardinal triaged this as `{kind or 'failed'}`: {reason}")
         log.info("triaged #%s as %s", number, kind, extra={"event": "issue_triaged", "data": {"label": target, "kind": kind}})
     return {"issue": number, "kind": kind, "label": target}
+
+
+def abandon(repo: Repo, db: sqlite3.Connection, claim: sqlite3.Row) -> dict:
+    """Settle a run whose process died without settling (SIGKILL, out of memory): its claim would
+    otherwise hold the issue forever. Its worktree stays; a later run of the issue replaces it."""
+    number, run_id = claim["issue"], claim["run_id"]
+    detail = f"The process running this issue (pid {claim['pid']}) died without settling"
+    failure = {"kind": FailureKind.CRASH.value, "stage": "abandoned", "detail": detail}
+    with bind(run_id=run_id, issue=number):
+        log.error("run %s abandoned: %s", run_id, detail, extra={"event": "run_abandoned",
+                                                                 "failure_kind": FailureKind.CRASH.value})
+        try:
+            runs.update(db, run_id, status="failed", failure_kind=failure["kind"], failure_detail=detail, ended_at=now())
+            issues.set_state(repo.slug, number, repo.labels, repo.labels.error)
+            issues.comment(repo.slug, number, f"Cardinal stopped at `abandoned` (crash): {detail}")
+        finally:
+            inputs.release(db, repo.slug, number)
+    return {"run_id": run_id, "issue": number, "status": "failed", "failure": failure}
 
 
 def drive(run: Run, thread_id: str, payload) -> dict:

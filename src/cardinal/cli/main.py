@@ -65,7 +65,10 @@ def parser() -> argparse.ArgumentParser:
 
 
 def terminate(signum, frame):  # noqa: ANN001, ARG001
-    """SIGTERM unwinds like Ctrl-C, so claims are released and test process groups are killed."""
+    """SIGTERM unwinds like Ctrl-C, so claims are released and test process groups are killed. Later
+    ones are ignored: a worker run can be sent SIGTERM by both systemd and its daemon, and a second
+    SystemExit would cut its settle short."""
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
     raise SystemExit(128 + signum)
 
 
