@@ -3,6 +3,8 @@
   offline --scenario NAME              single | daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge | parallel | worker-killed | scout
   live --suite PATH --model SPEC       the product's daemon against the live GitHub test repository
   propagate --model SPEC              an app error in the live test repo becomes an issue Cardinal fixes
+  live-scout --model SPEC [--keep-issues]  one scout pass on a seeded branch of the live test repository
+  live-scout --cleanup RUN             close a kept live-scout run's issues and delete its seed branch
   self-seed [--reseed]                 snapshot Cardinal into the self-test repository and file its issues
   clean --manifest PATH [--model SPEC] restore the live test repository from a pinned manifest
 Every command writes artifacts/e2e/<run-id>/report.json with a rerun command, and exits nonzero
@@ -30,6 +32,10 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--suite", type=Path, default=ROOT / "tests" / "fixtures" / "github_notes_suite.json")
     live.add_argument("--model", required=True)
     live.add_argument("--only", nargs="*", help="case keys to run, in suite order")
+    live_scout = sub.add_parser("live-scout")
+    live_scout.add_argument("--model")
+    live_scout.add_argument("--keep-issues", action="store_true", help="leave the issues and seed branch for a person")
+    live_scout.add_argument("--cleanup", metavar="RUN", help="clean up a run kept with --keep-issues")
     propagate = sub.add_parser("propagate")
     propagate.add_argument("--model", required=True)
     self_seed = sub.add_parser("self-seed")
@@ -38,6 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     clean.add_argument("--manifest", type=Path, required=True)
     clean.add_argument("--model", required=True)
     args = parser.parse_args(argv)
+    if args.command == "live-scout" and not (args.model or args.cleanup):
+        parser.error("live-scout needs --model, or --cleanup RUN")
 
     artifact = ROOT / "artifacts" / "e2e" / uuid.uuid4().hex
     artifact.mkdir(parents=True)
@@ -50,6 +58,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "live":
         from cardinal_harness import live as suite
         report = suite.run_suite(args.suite, args.model, artifact, args.only)
+    elif args.command == "live-scout":
+        from cardinal_harness import live_scout
+        report = live_scout.cleanup_later(args.cleanup) if args.cleanup else \
+            live_scout.run(args.model, artifact, args.keep_issues)
     elif args.command == "self-seed":
         from cardinal_harness import self_seed
         try:

@@ -185,6 +185,7 @@ read-only.
 uv run --locked python -m pytest -q                              # offline scenarios, no network
 uv run --locked python -m cardinal_harness offline --scenario single      # or daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge | parallel | worker-killed | scout
 uv run --locked --extra openai --extra e2e python -m cardinal_harness live --model openai:gpt-6-sol
+uv run --locked --extra openai --extra e2e python -m cardinal_harness live-scout --model openai:gpt-6-sol [--keep-issues]
 ```
 
 The offline scenarios run the real product against a bare Git remote. `gh` is replaced by a
@@ -207,6 +208,16 @@ Cleanup always restores the pinned `main` under an exact lease, removes managed 
 branches, and restores every parked issue's labels. Every run writes
 `artifacts/e2e/<run-id>/report.json` with a rerun command, the product's invocation logs and a
 copy of its store.
+
+`live-scout --model SPEC` runs one real `cardinal scout --once` pass, in propose mode, against
+a `scout-seed-<run>` branch of the test repository: the pinned baseline plus one commit from
+`tests/fixtures/scout_seed` that plants a response key differing from its JSON Schema and a broken
+README example. `main` is never touched. The run passes when the pass finishes, every filed issue
+is proposed and none ready, and an issue matches each planted defect
+(`tests/fixtures/scout_live.json` says how a match is decided). The baseline's own empty-store
+crash in `GET /stats/tags` is recorded but not required. Cleanup closes the pass's issues with a
+comment and deletes the branch; `--keep-issues` leaves both, and `live-scout --cleanup <run>`
+removes them later.
 
 `tests/blank_repo` is the local copy of the live test repository, a FastAPI, Redis and React
 notes service with its own Docker-based HTTP and browser tests. `tests/acceptance` holds the

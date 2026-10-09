@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "top-tag.schema.json",
+  "title": "GET /stats/top-tag response",
+  "type": "object",
+  "properties": {
+    "tag": {
+      "type": ["string", "null"],
+      "description": "The most used tag across all notes, or null when no note has a tag"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many times that tag is used across all notes"
+    }
+  },
+  "required": ["tag", "count"],
+  "additionalProperties": false
+}

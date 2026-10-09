@@ -1,0 +1,33 @@
+{
+  "suite": "tests/fixtures/github_notes_suite.json",
+  "seed": "tests/fixtures/scout_seed",
+  "seed_message": "Add GET /stats/top-tag and its JSON Schema",
+  "scout": {"autonomy": "propose", "categories": ["bug", "feature"], "areas_per_pass": 6, "cooldown_days": 0,
+            "max_proposals_per_pass": 6, "max_files": 3, "repro": true, "auto_min_decided": 10,
+            "auto_min_approval": 0.8, "auto_min_done": 0.7},
+  "matching": "A filed issue matches a finding when its Evidence section cites one of `paths` and every group in `keywords` has a case-insensitive regex hit in its title or body. Planted findings are hard checks; natural ones are recorded only.",
+  "findings": [
+    {
+      "key": "top-tag-key",
+      "planted": true,
+      "about": "GET /stats/top-tag returns key `uses`; README and docs/schemas/top-tag.schema.json require `count`",
+      "paths": ["api/app/routes/stats.py", "docs/schemas/top-tag.schema.json"],
+      "keywords": [["\\buses\\b"], ["\\bcount\\b", "schema"]]
+    },
+    {
+      "key": "healthz-doc",
+      "planted": true,
+      "about": "README's health example curls /healthz; the route is /health",
+      "paths": ["README.md"],
+      "keywords": [["healthz"]]
+    },
+    {
+      "key": "zero-notes",
+      "planted": false,
+      "about": "Pre-existing on the baseline: GET /stats/tags divides by len(notes), so it returns 500 when there are no notes",
+      "paths": ["api/app/routes/stats.py"],
+      "keywords": [["ZeroDivision", "divi(de|sion) by zero", "no notes", "zero notes", "\\b0 notes", "empty"],
+                   ["/stats/tags", "average_tags_per_note", "tag_stats"]]
+    }
+  ]
+}

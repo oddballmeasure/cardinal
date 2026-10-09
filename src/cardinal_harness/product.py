@@ -32,7 +32,7 @@ def write_config(home: Path, *, models: dict[str, str], slug: str, remote_url: s
                  required_checks: list[str], paths_off_limits: list[str], deploy: str | None,
                  limits: dict[str, int] | None = None, source_repo: str = "oddballmeasure/cardinal",
                  sections: dict[str, dict] | None = None, extra_repos: list[str] | None = None,
-                 max_parallel_runs: int | None = None) -> Path:
+                 max_parallel_runs: int | None = None, base_branch: str = "main") -> Path:
     home.mkdir(parents=True, exist_ok=True)
     lines = ["[models]", *(f"{role} = {json.dumps(spec)}" for role, spec in models.items()), "",
              "[logging]", 'level = "info"', f"source_repo = {json.dumps(source_repo)}", ""]
@@ -41,7 +41,7 @@ def write_config(home: Path, *, models: dict[str, str], slug: str, remote_url: s
     if limits:
         lines += ["[limits]", *(f"{key} = {value}" for key, value in limits.items()), ""]
     lines += ["[[repos]]", f"slug = {json.dumps(slug)}", f"remote_url = {json.dumps(remote_url)}",
-              'base_branch = "main"', f"test_command = {toml_list(test_command)}",
+              f"base_branch = {json.dumps(base_branch)}", f"test_command = {toml_list(test_command)}",
               f"required_checks = {toml_list(required_checks)}", f"paths_off_limits = {toml_list(paths_off_limits)}",
               "paths_hidden = []"]  # graded targets never contain their own grader
     if max_parallel_runs is not None:
