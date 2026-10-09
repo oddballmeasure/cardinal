@@ -92,7 +92,11 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [x] Repro: confirmed bugs get one test in a scratch worktree; only test files may change, the suite must fail on the new test against a cached green base; a test passing on base drops the proposal; passing repros go in the body as "Suggested test" (2eff919)
 - [x] Autonomy gate: `autonomy = "auto"` files ready only on the category's 60-day record (decided, approval, done-rate) plus a repro for bugs; auto-filed issues do not count as approvals (lessons/track-record-excludes-own-decisions.md) (cfdd4ba)
 - [x] Check: `offline --scenario scout` passes 18/18; full offline suite 13 passed, 1 skipped (live) in 13m53s on cfdd4ba; invariant grep clean
-- [ ] Live: one propose-only pass on oddballmeasure/cardinal_test_repo, then koizler, compared with #32–#44; precision and token cost per pass
+- [x] `live-scout` harness: seeds `scout-seed-<id>` on the test repo (schema key `uses` vs `count`, README `/healthz`), runs one real pass, grades from GitHub and the store, cleans up (`--keep-issues`, `--cleanup <id>`) (34a3c44)
+- [x] Live run da423280 (gpt-6-sol): FAILED 1/2 planted. No docs area, so `/healthz` was never read; the zero-notes crash was skipped as closed #29; two real findings dropped for quotes one line off, one for a criterion naming `[]`. 7.6 min, 490k input tokens
+- [x] Fixed (68a90d1): planner always makes a docs area; docs contradicting code are bugs (docs-only fixes skip repro); a closed issue still visible in code is a regression, not a duplicate; quotes found within 10 lines of the cited range are accepted and the range corrected; `[]`/`{}`/`null`/`true`/`false` count as exact values
+- [x] Live run a6106eea: PASSED 6/6. 5 filed (#38–#42 on the test repo), both planted defects plus the natural zero-notes crash; 4 bug repros failed on base as required; the other 2 filed (lone-surrogate 500, reporting-thread 500) are repro-confirmed real bugs; 3 in-pass duplicates suppressed. 16 min, 776k input tokens
+- [ ] Live on the next application repo (koizler is no longer the target)
 - [ ] Host: nightly `cardinal-scout.service` + `.timer` (needs Monty's go-ahead); retire Oscar's runbook §2 once live
 - [ ] Not proven offline: real models' survey quality, the reviewer catching real mistakes, `gh issue view --json comments` and `issue list --state all` against real GitHub, repro on a Docker-based `test_command`
 - [ ] A held proposal that fails to weigh every pass is held forever; consider dropping after N attempts
