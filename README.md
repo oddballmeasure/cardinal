@@ -57,14 +57,16 @@ commented example.
 | Section | Keys | Notes |
 |---|---|---|
 | `[models]` | `orchestrator`, `profiler`, `coder`, `verifier`, `pr_manager`, `deployer`, `monitor` | Required, each `provider:model` (e.g. `openai:gpt-6-sol`). No role borrows another's |
+| | `scout`, `scout_reviewer` | Required only with `[scout]`. `scout` plans, surveys and writes repro tests; `scout_reviewer` judges each proposal |
 | `[logging]` | `level`, `source_repo` | Required. `source_repo` is where Cardinal files its own defects |
 | `[[repos]]` | `slug`, `base_branch`, `test_command`, `required_checks`, `paths_off_limits`, `paths_hidden` | Required, one table per repository. `test_command` is an argv list (no shell) and is the only test oracle. `required_checks = []` merges without waiting for CI. Agents cannot change `paths_off_limits`, and can neither see nor change `paths_hidden` (for example a grader kept in the repository) |
 | | `remote_url`, `branch_prefix`, `retry_after_hours` | Optional. Defaults: `https://github.com/<slug>`, `cardinal`, and no automatic retry (at least 24 when set) |
-| `[repos.labels]` | `ready`, `working`, `done`, `error`, `needs_human`, `investigate` | Optional renames of the `cardinal:*` labels |
+| `[repos.labels]` | `ready`, `working`, `done`, `error`, `needs_human`, `investigate`, `proposed` | Optional renames of the `cardinal:*` labels |
 | `[repos.deploy]` | `transport`, `local_directory` | Optional. `local` or `ssh`; see Deployment |
 | `[limits]` | `recursion_limit`, `coder_attempts`, `verify_rounds`, `ci_repair_rounds`, `base_sync_rounds`, `test_timeout_seconds`, `ci_timeout_seconds`, `ci_poll_seconds`, `model_timeout_seconds` | Optional; defaults are in `examples/cardinal.toml` |
 | `[ingest]` | `bind`, `token_env` | Optional; enables `cardinal ingest` |
 | `[monitor]` | `min_occurrences`, `window_hours`, `max_issues_per_pass` | Optional; enables `cardinal monitor` |
+| `[scout]` | `autonomy`, `categories`, `areas_per_pass`, `cooldown_days`, `max_proposals_per_pass`, `max_files`, `repro`, `auto_min_decided`, `auto_min_approval`, `auto_min_done` | Optional; enables `cardinal scout`. Every key is required; see Finding work |
 
 Environment variables:
 
@@ -102,6 +104,44 @@ configured `[[repos]]` slug, or it is rejected. `examples/app.env` shows an app'
 at `http://host.docker.internal:<port>` on Docker Desktop. The orchestrator triages each filed
 issue to `cardinal:ready` (it can write the fix) or `cardinal:investigate`.
 
+### Finding work: the scout
+
+`cardinal scout` looks for small, verifiable work in a repository and proposes it as issues. It
+runs beside the daemon, never inside it, and hands approved work over through labels.
+
+```sh
+uv run cardinal scout --repo owner/name --once     # one pass; omit --once to repeat every --interval seconds
+uv run cardinal scout status --repo owner/name     # track record and autonomy gate per category
+```
+
+A pass reads back what became of earlier proposals, then reuses the repository profile, has the
+`scout` model split the repository into areas, and surveys the `areas_per_pass` least recently
+surveyed ones (an area surveyed within `cooldown_days` is skipped). Each proposal is a `bug` or
+a small `feature`, written as observable behaviour with file and line evidence. Before anyone sees it:
+
+- **Code checks.** Every quote must be in the cited lines at the base commit. Evidence and the files
+  a fix would change must be tracked, outside `paths_off_limits` and `paths_hidden`, and at most
+  `max_files`. Each acceptance criterion must name an exact value (a number or a quoted literal).
+- **Dedupe.** Nothing already filed and open, or rejected in the last 60 days, and nothing whose
+  title matches an open issue.
+- **Review.** The `scout_reviewer` model re-derives the claim from the code: `confirmed`, `wrong`,
+  `too_big`, `duplicate`, or `product_decision`. Only confirmed proposals become work; product
+  decisions are filed as `cardinal:needs-human` for a person.
+- **Repro.** With `repro = true`, a confirmed bug gets one new repository test, written in a
+  scratch worktree. It must be the only change and must fail on a base whose suite is green. A
+  test that passes drops the proposal; a failing one goes into the issue as "Suggested test".
+
+At most `max_proposals_per_pass` issues are filed a pass; the rest are held for the next. Issues
+are labelled `cardinal:proposed`, which the daemon ignores. Approve by swapping it for
+`cardinal:ready`; reject by closing the issue with a comment saying why. The next pass records
+both, and recent rejection reasons are given to the survey.
+
+With `autonomy = "auto"`, a proposal is filed straight to `cardinal:ready` only when its category
+has at least `auto_min_decided` decided proposals in the last 60 days, approval and done-rate (done
+among landed issues) at or above `auto_min_approval` and `auto_min_done`, and, for a bug, a repro
+test. The issue says why. Anything short of that is proposed, so a falling rate returns a category
+to propose-only by itself.
+
 ## Running
 
 ```sh
@@ -133,7 +173,7 @@ profile → intake ─┬─ needs a person → pause (cardinal resume) → inta
 - **PR.** The branch is pushed with a lease. The PR merges only after every `required_checks` check passes on the verified head. GitHub runs no `pull_request` CI on a conflicting PR, so a PR whose `mergeable` turns `CONFLICTING` while waiting goes straight back to sync instead of waiting out `ci_timeout_seconds`. A CI failure names only the required checks that failed.
 - **After the merge.** On each poll the daemon reads every check on each merge commit it made, not only the required ones. A failure is re-run once (`gh run rerun --failed`); if it fails again, Cardinal files one issue, `CI failed on <base> after #<pr>: <checks>`, with the log tails, labelled `cardinal:ready`. A follow-up whose own merge fails again is labelled `cardinal:needs-human` instead. Judgements are kept in the store, so a restart never re-files, and a merge still unjudged after six hours is given up.
 - **Parallel runs.** With `max_parallel_runs` above 1 on a repository, the daemon starts each ready issue as its own `cardinal run N` process, up to that many at once. Planning (profile and intake) still takes one issue at a time, under a file lock beside the shared clone; coding, verifying, CI waits and syncs overlap, and merges take turns under a second lock that re-checks mergeability right before merging. An issue whose body says it `depends on`, `builds on`, `requires` or is `blocked by` another issue still running or queued waits for it. A run's process killed outright (SIGKILL, out of memory) is settled as failed by the next poll, which releases its claim. Each sibling merge moves the base under the others, so raise `base_sync_rounds` along with it.
-- **Labels.** Labels form one state axis: `cardinal:ready`, `in-progress`, `done`, `error`, `needs-human` and `investigate`. A failure records a typed `FailureKind`. Retryable failures are re-queued after `retry_after_hours` (at least 24) only when that setting is present.
+- **Labels.** Labels form one state axis: `cardinal:ready`, `in-progress`, `done`, `error`, `needs-human` and `investigate`. The scout's `cardinal:proposed` sits outside it. A failure records a typed `FailureKind`. Retryable failures are re-queued after `retry_after_hours` (at least 24) only when that setting is present.
 
 Agents have no shell. The worktree is the only writable mount. Within it, `.git`, vendor
 directories and `paths_off_limits` refuse writes, and the skills and run context are
@@ -143,7 +183,7 @@ read-only.
 
 ```sh
 uv run --locked python -m pytest -q                              # offline scenarios, no network
-uv run --locked python -m cardinal_harness offline --scenario single      # or daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge | parallel | worker-killed
+uv run --locked python -m cardinal_harness offline --scenario single      # or daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge | parallel | worker-killed | scout
 uv run --locked --extra openai --extra e2e python -m cardinal_harness live --model openai:gpt-6-sol
 ```
 

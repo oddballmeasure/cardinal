@@ -86,6 +86,17 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [ ] Live: parallel runs against real GitHub and koizler's real `test_command` load (koizler#25 says vitest is load-sensitive)
 - [ ] Branch protection that requires up-to-date branches would refuse sibling merges; Cardinal does not handle that
 
+## Phase 12 — the scout (plan: ~/.claude/plans/this-job-suggesting-work-golden-whisper.md)
+- [x] `cardinal scout --repo X [--once]`: profile (reused, under the intake lock), planner areas, survey of the least recently surveyed `areas_per_pass`, independent reviewer; code checks quotes at base, paths, `max_files`, observable acceptance criteria; dedupe by fingerprint and open-issue titles; files `cardinal:proposed`, product decisions `cardinal:needs-human`; cap holds the overflow. Offline `scout` (27b8953)
+- [x] Outcomes read back each pass (ready or a run = approved, closed = rejected with its last comment, done/error = landed); rejection reasons in the survey's `/context/rejections.json`; `cardinal scout status` (63e4e2b)
+- [x] Repro: confirmed bugs get one test in a scratch worktree; only test files may change, the suite must fail on the new test against a cached green base; a test passing on base drops the proposal; passing repros go in the body as "Suggested test" (2eff919)
+- [x] Autonomy gate: `autonomy = "auto"` files ready only on the category's 60-day record (decided, approval, done-rate) plus a repro for bugs; auto-filed issues do not count as approvals (lessons/track-record-excludes-own-decisions.md) (cfdd4ba)
+- [x] Check: `offline --scenario scout` passes 18/18; full offline suite 13 passed, 1 skipped (live) in 13m53s on cfdd4ba; invariant grep clean
+- [ ] Live: one propose-only pass on oddballmeasure/cardinal_test_repo, then koizler, compared with #32–#44; precision and token cost per pass
+- [ ] Host: nightly `cardinal-scout.service` + `.timer` (needs Monty's go-ahead); retire Oscar's runbook §2 once live
+- [ ] Not proven offline: real models' survey quality, the reviewer catching real mistakes, `gh issue view --json comments` and `issue list --state all` against real GitHub, repro on a Docker-based `test_command`
+- [ ] A held proposal that fails to weigh every pass is held forever; consider dropping after N attempts
+
 ## Discovered along the way
 - [x] Killed daemon left its test process group (and hung docker helpers) running: run_repo_tests now kills its group on any interruption; SIGTERM unwinds and settles the run as interrupted
 - [x] Live grader crashed querying checks for an unpushed commit, and ran Docker acceptance for runs that never merged: both fixed
