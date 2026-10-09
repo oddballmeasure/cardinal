@@ -19,7 +19,7 @@ from cardinal_harness.product import Product, json_file, product_env, write_conf
 
 ROLES = ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor", "scout", "scout_reviewer")
 SCOUT = {"autonomy": "propose", "categories": ["bug", "feature"], "areas_per_pass": 2, "cooldown_days": 7,
-         "max_proposals_per_pass": 2, "max_files": 3, "repro": False, "auto_min_decided": 3,
+         "max_proposals_per_pass": 2, "max_files": 3, "repro": True, "auto_min_decided": 3,
          "auto_min_approval": 0.8, "auto_min_done": 0.7}
 
 
@@ -64,6 +64,9 @@ def scenario(temp: Path, artifact: Path) -> dict:
            real.get("labels") == ["cardinal:proposed"] and "`ledger/records.py:8`" in real.get("body", "")
            and "return json.loads(path.read_text())" in real.get("body", "") and "Cardinal-Scout: " in real.get("body", ""),
            real)
+    expect(checks, "the defect's body carries the repro test that failed on base",
+           "## Suggested test" in real.get("body", "") and "+def test_missing_input_is_reported" in real.get("body", ""),
+           real.get("body"))
     fabricated = seen.get(scout_replay.FABRICATED.title, {})
     expect(checks, "a fabricated quote is dropped by code before review",
            fabricated.get("action") == "dropped" and "does not contain the quoted text" in fabricated.get("reason", "")
@@ -104,6 +107,13 @@ def scenario(temp: Path, artifact: Path) -> dict:
     expect(checks, "pass 2 rotates to the area not yet surveyed", code == 0 and isinstance(second, dict)
            and second.get("areas") == ["CLI entry point"], second)
     decision = filed(state, scout_replay.ACCENTS.title)
+    second_seen = by_title(second)
+    unknown = second_seen.get(scout_replay.UNKNOWN.title, {})
+    expect(checks, "a bug whose new test passes on base is dropped as not reproduced",
+           unknown.get("action") == "dropped" and unknown.get("repro_ok") == 0
+           and "did not reproduce" in unknown.get("reason", "") and not filed(state, scout_replay.UNKNOWN.title), unknown)
+    expect(checks, "repro worktrees are always removed",
+           not [path.name for path in (product.home / "worktrees").rglob("scout-*")], list((product.home / "worktrees").rglob("*"))[:5])
     expect(checks, "the held product decision is filed for a person, not as work",
            decision.get("labels") == ["cardinal:needs-human"] and "product decision" in decision.get("body", ""), decision)
 
