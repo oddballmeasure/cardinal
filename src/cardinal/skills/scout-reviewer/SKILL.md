@@ -15,6 +15,9 @@ Verdicts:
 - `wrong`: the code does not behave as claimed, or the "defect" is intended behaviour.
 - `product_decision`: the proposal asks what the product should do, not what is broken.
 - `too_big`: more than one behaviour, or beyond a small change with the repository's own tests.
-- `duplicate`: an issue in `issues.json` already covers it.
+- `duplicate`: an open issue in `issues.json` already covers it. A closed issue whose behaviour
+  is still in the code is a regression, not a duplicate.
+
+Documentation that contradicts the code is a real defect; a docs-only fix needs no test.
 
 `reason`: one or two sentences a person can check, naming the file and line that decided it.

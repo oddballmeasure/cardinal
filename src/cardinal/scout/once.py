@@ -14,6 +14,7 @@ import sqlite3
 import time
 import uuid
 from collections import Counter
+from pathlib import Path
 
 from cardinal.agents.backends import under
 from cardinal.config.models import Config, Repo
@@ -36,6 +37,7 @@ from cardinal.store.recorder import Recorder
 
 log = logging.getLogger(__name__)
 WINDOW_DAYS = outcomes.WINDOW_DAYS
+DOCS = {".md", ".rst", ".txt", ".adoc"}
 
 
 def area_key(area: Area) -> str:
@@ -48,6 +50,11 @@ def choose(areas: list[Area], last: dict[str, str], cooldown_days: float, limit:
     unique = {area_key(area): area for area in reversed(areas)}
     fresh = [area for area in areas if unique.get(area_key(area)) is area and last.get(area_key(area), "") <= cutoff]
     return sorted(fresh, key=lambda area: last.get(area_key(area), ""))[:limit]
+
+
+def docs_only(proposal: Proposal) -> bool:
+    """A fix that only changes prose: no test can fail on it, so there is nothing to reproduce."""
+    return all(Path(path).suffix.lower() in DOCS for path in proposal.files)
 
 
 def failure_kind(exc: BaseException) -> FailureKind:
@@ -166,7 +173,7 @@ class Pass:
                 return self.record(row_id, proposal, "dropped", verdict=review.verdict, reason=f"reviewer {problem}")
             evidence = review.evidence
         repro = None
-        if review.verdict == "confirmed" and proposal.category == "bug" and self.settings.repro:
+        if review.verdict == "confirmed" and proposal.category == "bug" and self.settings.repro and not docs_only(proposal):
             repro = scout_repro.reproduce(run, proposal, self.base_sha, self.base_green(), next(self.repros))
             run.recorder.event("scout", "repro", {"title": proposal.title, "ok": repro.ok, "reason": repro.reason})
             if repro.refuted:

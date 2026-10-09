@@ -11,5 +11,7 @@ Output: one `SurveyPlan`.
 - Use `find_repo_context` to locate behaviour; read `/repo/` to confirm what owns it.
 - Each area is one coherent part of the running product: an endpoint group, a CLI command, a
   module and the code it calls. Name the files or directories, and say what to look for.
+- When the repository has user-facing documentation (a README, `docs/`), make one area of it,
+  paired with the code it describes: documentation that contradicts the code misleads every user.
 - Prefer active code that users reach. Skip vendored, generated, legacy and unused code.
 - Paths must be tracked files or directories in `/repo/`. Never list the whole repository.

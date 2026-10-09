@@ -9,10 +9,11 @@ from cardinal.agents.backends import under
 from cardinal.config.models import Repo, Scout
 from cardinal.contracts.scout import Evidence, Proposal
 
-# A criterion is observable when it names an exact value: a number (status, exit code, count) or a
-# quoted literal (message, label, field name).
-OBSERVABLE = re.compile(r'\d|`[^`]+`|"[^"]+"')
+# A criterion is observable when it names an exact value: a number (status, exit code, count), a
+# quoted literal (message, label, field name) or a JSON literal ([], {}, null, true, false).
+OBSERVABLE = re.compile(r'\d|`[^`]+`|"[^"]+"|\[\]|\{\}|\b(?:null|true|false)\b')
 MAX_SPAN = 40
+DRIFT = 10  # models miscount lines; a quote found this close to its cited range is the same evidence
 SIMILAR = 0.6
 
 
@@ -20,7 +21,22 @@ def normalise(text: str) -> str:
     return " ".join(text.split())
 
 
+def locate(lines: list[str], item: Evidence) -> tuple[int, int] | None:
+    """The cited range if it holds the quote, else the nearest range of the same length within DRIFT
+    lines that does. The quote itself must be in the file either way."""
+    quote = normalise(item.quote)
+    span = max(item.line_end - item.line_start, item.quote.strip("\n").count("\n"))
+    starts = sorted(range(max(1, item.line_start - DRIFT), item.line_start + DRIFT + 1),
+                    key=lambda start: abs(start - item.line_start))
+    for start in starts:
+        end = min(start + span, len(lines))
+        if quote in normalise("\n".join(lines[start - 1:end])):
+            return start, end
+    return None
+
+
 def evidence_problem(worktree: Path, items: list[Evidence], tracked: set[str], repo: Repo) -> str | None:
+    """Checks every quote and, where a model miscounted lines, corrects the cited range in place."""
     for item in items:
         where = f"{item.path}:{item.line_start}-{item.line_end}"
         source = worktree / item.path
@@ -31,10 +47,12 @@ def evidence_problem(worktree: Path, items: list[Evidence], tracked: set[str], r
         if not 0 <= item.line_end - item.line_start < MAX_SPAN:
             return f"evidence {where} is not a range of 1-{MAX_SPAN} lines"
         lines = source.read_text(errors="replace").splitlines()
-        if item.line_end > len(lines):
+        if item.line_start > len(lines):
             return f"evidence {where} is past the end of the file ({len(lines)} lines)"
-        if normalise(item.quote) not in normalise("\n".join(lines[item.line_start - 1:item.line_end])):
-            return f"evidence {where} does not contain the quoted text"
+        found = locate(lines, item)
+        if found is None:
+            return f"evidence {where} does not contain the quoted text, nor do the {DRIFT} lines around it"
+        item.line_start, item.line_end = found
     return None
 
 
