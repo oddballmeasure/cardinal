@@ -26,14 +26,14 @@ from cardinal.locks import lock
 from cardinal.logs.context import bind
 from cardinal.repo.git import GitError, detached_worktree, ensure_clone, fetch_base, remove_worktree
 from cardinal.roles import profiler, scout, scout_planner, scout_reviewer
-from cardinal.scout import render
+from cardinal.scout import outcomes, render
 from cardinal.scout.checks import evidence_problem, fingerprint, proposal_problem, similar
 from cardinal.store import scout as store
 from cardinal.store.db import now
 from cardinal.store.recorder import Recorder
 
 log = logging.getLogger(__name__)
-WINDOW_DAYS = 60  # how far back rejections are remembered and track records are counted
+WINDOW_DAYS = outcomes.WINDOW_DAYS
 
 
 def area_key(area: Area) -> str:
@@ -67,6 +67,7 @@ class Pass:
 
     def execute(self) -> dict:
         run, repo, db = self.run, self.run.repo, self.run.db
+        decided = outcomes.track(repo, db)
         issues.ensure_labels(repo.slug, repo.labels)  # lessons/labels-before-first-write.md
         ensure_clone(run.clone, repo.url, repo.base_branch)
         self.base_sha = fetch_base(run.clone, run.clone, repo.base_branch)
@@ -103,7 +104,7 @@ class Pass:
         counts = dict(Counter(item["action"] for item in self.results))
         store.update_pass(db, run.run_id, counts=json.dumps(counts), ended_at=now())
         return {"pass_id": run.run_id, "repo": repo.slug, "base_sha": self.base_sha, "autonomy": self.settings.autonomy,
-                "areas": surveyed, "proposals": self.results, "counts": counts}
+                "outcomes": decided, "areas": surveyed, "proposals": self.results, "counts": counts}
 
     def record(self, row_id: int | None, proposal: Proposal, status: str, **fields: object) -> None:
         store.record(self.run.db, row_id, repo=self.slug, pass_id=self.run.run_id, fingerprint=fingerprint(proposal),
@@ -186,5 +187,8 @@ def serve(home: Home, config: Config, db: sqlite3.Connection, repo: Repo, interv
 def status(config: Config, db: sqlite3.Connection, repo: Repo) -> dict:
     if config.scout is None:
         raise ValueError("No [scout] section in cardinal.toml")
-    return {"repo": repo.slug, "autonomy": config.scout.autonomy, "last_pass": store.last_pass(db, repo.slug),
-            "held": [row["title"] for row in store.held(db, repo.slug)]}
+    undecided = [{"issue": row["issue"], "title": row["title"], "outcome": row["outcome"]}
+                 for row in store.undecided(db, repo.slug)]
+    return {"repo": repo.slug, "autonomy": config.scout.autonomy, "window_days": WINDOW_DAYS,
+            "categories": outcomes.track_record(db, repo.slug), "open": undecided,
+            "held": [row["title"] for row in store.held(db, repo.slug)], "last_pass": store.last_pass(db, repo.slug)}

@@ -2,8 +2,10 @@
 code-checked proposals, which the daemon leaves alone until a person approves them.
 
 Pass 1 (propose, cap 2): a real defect is filed with its evidence; a fabricated quote, a duplicate
-of an open issue and a reviewer refusal are dropped; the overflow is held. Pass 2 rotates to the
-area not yet surveyed and files the held product decision for a person.
+of an open issue and a reviewer refusal are dropped; the overflow is held. A person then approves
+one proposal (label swap) and rejects the other (close with a comment). Pass 2 reads both back,
+hands the rejection reason to its survey, rotates to the area not yet surveyed and files the held
+product decision for a person. Pass 3 reads the approved issue's landing as done.
 """
 
 import json
@@ -19,6 +21,9 @@ ROLES = ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deploye
 SCOUT = {"autonomy": "propose", "categories": ["bug", "feature"], "areas_per_pass": 2, "cooldown_days": 7,
          "max_proposals_per_pass": 2, "max_files": 3, "repro": False, "auto_min_decided": 3,
          "auto_min_approval": 0.8, "auto_min_done": 0.7}
+
+
+REJECTION = "Not wanted: this CLI only filters by merchant; amount filters belong in the report tool."
 
 
 def write(home: Path, bare: Path, scout: dict) -> None:
@@ -79,14 +84,41 @@ def scenario(temp: Path, artifact: Path) -> dict:
     expect(checks, "the daemon never picks up proposed issues", code == 0 and drained == []
            and all(after["issues"][str(issue["number"])]["labels"] == ["cardinal:proposed"] for issue in proposed), drained)
 
+    approved, rejected = filed(after, scout_replay.MISSING_INPUT.title), filed(after, scout_replay.MIN_AMOUNT.title)
+    after["issues"][str(approved.get("number"))]["labels"] = ["cardinal:ready"]
+    after["issues"][str(rejected.get("number"))].update(state="CLOSED", comments=[REJECTION])
+    json_file(state_path, after)
+
     write(product.home, bare, {**SCOUT, "max_proposals_per_pass": 5})
     code, second = product("scout", "--once", "--repo", SLUG)
     state = json.loads(state_path.read_text())
+    read_back = {item["issue"]: item for item in second.get("outcomes", [])} if isinstance(second, dict) else {}
+    expect(checks, "pass 2 reads the label swap as approval and the close as rejection, with its comment",
+           read_back.get(approved.get("number"), {}).get("outcome") == "approved"
+           and read_back.get(rejected.get("number"), {}).get("outcome") == "rejected"
+           and read_back.get(rejected.get("number"), {}).get("reason") == REJECTION, read_back)
+    context = product.home / "runs" / str((second or {}).get("pass_id")) / "context" / "rejections.json"
+    told = json.loads(context.read_text()) if context.is_file() else []
+    expect(checks, "the rejection reason is in the next survey's context",
+           [item["reason"] for item in told] == [REJECTION], told)
     expect(checks, "pass 2 rotates to the area not yet surveyed", code == 0 and isinstance(second, dict)
            and second.get("areas") == ["CLI entry point"], second)
     decision = filed(state, scout_replay.ACCENTS.title)
     expect(checks, "the held product decision is filed for a person, not as work",
            decision.get("labels") == ["cardinal:needs-human"] and "product decision" in decision.get("body", ""), decision)
+
+    state["issues"][str(approved.get("number"))].update(labels=["cardinal:done"], state="CLOSED")
+    json_file(state_path, state)
+    code, third = product("scout", "--once", "--repo", SLUG)
+    code_status, status = product("scout", "status", "--repo", SLUG)
+    categories = (status or {}).get("categories", {}) if isinstance(status, dict) else {}
+    expect(checks, "pass 3 surveys nothing new and reads the approved issue's landing as done",
+           code == 0 and isinstance(third, dict) and third.get("areas") == [] and
+           [item.get("outcome") for item in third.get("outcomes", [])] == ["done"], third)
+    expect(checks, "scout status reports the track record per category",
+           code_status == 0 and categories.get("bug", {}).get("done") == 1 and categories.get("bug", {}).get("approval") == 1
+           and categories.get("feature", {}).get("rejected") == 1 and categories.get("feature", {}).get("approval") == 0,
+           status)
 
     product.keep_store()
     json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
