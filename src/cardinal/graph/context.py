@@ -56,3 +56,24 @@ class Run:
 def slug(title: str) -> str:
     words = "".join(ch.lower() if ch.isalnum() else " " for ch in title).split()
     return "-".join(words)[:40].strip("-") or "issue"
+
+
+@dataclass
+class ScoutRun:
+    """A scout pass: like a Run, but over a detached worktree at the base branch, with no issue. The
+    profiler takes either; context_dir and write_context are Run's own, so both lay out /context/ alike."""
+
+    home: Home
+    config: Config
+    repo: Repo
+    db: sqlite3.Connection
+    recorder: Recorder
+    run_id: str
+    worktree: Path
+
+    clone = Run.clone
+    context_dir = Run.context_dir
+    write_context = Run.write_context
+
+    def agent_context(self, **extra: object) -> dict:
+        return {"repo": self.repo.slug, "run_id": self.run_id, "worktree": str(self.worktree), **extra}

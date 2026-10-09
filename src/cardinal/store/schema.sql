@@ -117,3 +117,49 @@ CREATE TABLE IF NOT EXISTS post_merge (
     updated_at TEXT NOT NULL,
     PRIMARY KEY (repo, merge_sha)
 );
+
+-- INPUT. One `cardinal scout` pass over one repository. baseline_passed caches the test command's
+-- result on base_sha, so repro tests are judged against a base known to be green.
+CREATE TABLE IF NOT EXISTS scout_passes (
+    pass_id TEXT PRIMARY KEY,
+    repo TEXT NOT NULL,
+    autonomy TEXT NOT NULL,
+    base_sha TEXT,
+    baseline_passed INTEGER,
+    counts TEXT,                       -- JSON: filed, dropped, held
+    failure_kind TEXT,
+    failure_detail TEXT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT
+);
+
+-- INPUT. Every proposal the scout weighed, and what became of it. Filed rows are its track record:
+-- outcome is read back from the issue each pass, and gates autonomy per category.
+CREATE TABLE IF NOT EXISTS scout_proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    repo TEXT NOT NULL,
+    pass_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    proposal TEXT NOT NULL,            -- JSON Proposal, so a held one can be weighed again
+    status TEXT NOT NULL,              -- filed | dropped | held
+    reason TEXT,                       -- why it was dropped or held, or why it filed as it did
+    verdict TEXT,                      -- the reviewer's
+    repro_ok INTEGER,
+    filed_mode TEXT,                   -- proposed | auto | needs_human
+    issue INTEGER,
+    outcome TEXT,                      -- approved | rejected | done | error; NULL while undecided
+    outcome_reason TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS scout_proposals_by_fingerprint ON scout_proposals (repo, fingerprint);
+
+-- INPUT. When each survey area (its sorted paths) was last surveyed, so passes rotate through a repo.
+CREATE TABLE IF NOT EXISTS scout_areas (
+    repo TEXT NOT NULL,
+    area TEXT NOT NULL,
+    last_surveyed TEXT NOT NULL,
+    PRIMARY KEY (repo, area)
+);

@@ -53,7 +53,9 @@ def fields(item: dict, args: list[str]) -> dict:
 
 
 def issue_json(issue: dict) -> dict:
-    return {**issue, "labels": [{"name": name} for name in issue["labels"]]}
+    """As gh prints it: labels and comments are objects. State keeps comments as their bodies."""
+    return {**issue, "labels": [{"name": name} for name in issue["labels"]],
+            "comments": [{"author": {"login": "fake-user"}, "body": body} for body in issue["comments"]]}
 
 
 def conflicting(state: dict, pr: dict) -> bool:

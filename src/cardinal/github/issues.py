@@ -12,6 +12,7 @@ LABEL_STYLES = {
     "error": ("b60205", "Cardinal failed; see the issue comments"),
     "needs_human": ("d93f0b", "Cardinal needs a human decision"),
     "investigate": ("c5def5", "Cardinal needs research before coding"),
+    "proposed": ("bfdadc", "Proposed by Cardinal's scout; swap for ready to approve, close to reject"),
 }
 
 
@@ -31,6 +32,16 @@ def with_label(repo: str, label: str, state: str = "open") -> list[int]:
     data = gh_json("issue", "list", "-R", repo, "--state", state, "--label", label,
                    "--limit", "100", "--json", "number")
     return sorted(item["number"] for item in data)
+
+
+def titles(repo: str) -> list[dict]:
+    """The newest issues, open and closed: number, title and state."""
+    return gh_json("issue", "list", "-R", repo, "--state", "all", "--limit", "200", "--json", "number,title,state")
+
+
+def last_comment(repo: str, number: int) -> str:
+    comments = gh_json("issue", "view", str(number), "-R", repo, "--json", "comments")["comments"]
+    return comments[-1]["body"] if comments else ""
 
 
 def set_state(repo: str, number: int, labels: Labels, target: str) -> None:

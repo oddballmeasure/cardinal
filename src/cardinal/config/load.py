@@ -23,6 +23,8 @@ verifier = "openai:gpt-6-sol"
 pr_manager = "openai:gpt-6-sol"
 deployer = "openai:gpt-6-sol"
 monitor = "openai:gpt-6-sol"
+# scout = "openai:gpt-6-sol"            # required with [scout]
+# scout_reviewer = "openai:gpt-6-sol"   # required with [scout]
 
 [logging]
 level = "info"
@@ -38,6 +40,19 @@ source_repo = "oddballmeasure/cardinal"  # Cardinal's own defects are filed here
 # min_occurrences = 3
 # window_hours = 24
 # max_issues_per_pass = 3
+
+# Optional: `cardinal scout --repo X` proposes small, reviewed issues as cardinal:proposed.
+# [scout]
+# autonomy = "propose"          # or "auto": a category with a good track record files ready
+# categories = ["bug", "feature"]
+# areas_per_pass = 2
+# cooldown_days = 7
+# max_proposals_per_pass = 3
+# max_files = 3
+# repro = true                  # bugs get a test that must fail on the base branch
+# auto_min_decided = 10
+# auto_min_approval = 0.8
+# auto_min_done = 0.7
 
 [[repos]]
 slug = "{slug}"

@@ -10,6 +10,7 @@
 `parallel`: three workers: #11, #17 and #18 overlap, #12 waits for #11, planning never overlaps, and
           #17 and #18 both append to the README, so the later merge brings in the earlier one.
 `worker-killed`: a run killed outright is settled as failed by the next daemon poll, then reruns.
+`scout`: `cardinal scout` proposes reviewed, code-checked issues and learns from their outcomes.
 Every pass is judged from outside: fake-GitHub state, the bare remote's refs, `status --json`,
 and the independent acceptance tests in tests/acceptance.
 """
@@ -544,9 +545,14 @@ def monitor(temp: Path, artifact: Path) -> dict:
     return scenario(temp, artifact)
 
 
+def scout(temp: Path, artifact: Path) -> dict:
+    from cardinal_harness.scout_scenario import scenario  # imports offline; kept local to avoid a cycle
+    return scenario(temp, artifact)
+
+
 SCENARIOS = {"single": single, "daemon": daemon, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
-             "parallel": parallel, "worker-killed": worker_killed}
+             "parallel": parallel, "worker-killed": worker_killed, "scout": scout}
 
 
 def run(scenario: str, artifact: Path) -> dict:

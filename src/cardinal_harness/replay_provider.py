@@ -64,6 +64,11 @@ def last_result(messages: list) -> dict | list | str:
 
 def provider(context: dict):
     stage = context["stage"]
+    if stage.startswith("scout"):
+        from cardinal_harness import scout_replay  # imports this module; kept local to avoid a cycle
+        return scout_replay.model(context)
+    if stage == "profiler" and "issue" not in context:  # the scout profiles a repository without an issue
+        return profiler(context, "")
     land_elsewhere(context)
     if stage == "monitor":
         return monitor(context)

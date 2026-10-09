@@ -61,6 +61,12 @@ def parser() -> argparse.ArgumentParser:
     watch = sub.add_parser("monitor", help="File issues for repeated errors in the logs")
     watch.add_argument("--once", action="store_true", help="Scan once, then exit")
     watch.add_argument("--interval", type=int, default=300)
+
+    scout = sub.add_parser("scout", help="Find, review and propose work for one repository")
+    scout.add_argument("action", nargs="?", choices=["status"], help="status: track record and gate per category")
+    scout.add_argument("--repo")
+    scout.add_argument("--once", action="store_true", help="Run one pass, then exit")
+    scout.add_argument("--interval", type=int, default=86400)
     return root
 
 

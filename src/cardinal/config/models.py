@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from cardinal.home import SLUG
 
@@ -21,6 +21,9 @@ class RoleModels(Strict):
     pr_manager: str = Field(min_length=1)
     deployer: str = Field(min_length=1)
     monitor: str = Field(min_length=1)
+    # Only the scout uses these, so they are required only when [scout] is present (Config checks).
+    scout: str | None = Field(default=None, min_length=1, description="Plans, surveys and writes repro tests")
+    scout_reviewer: str | None = Field(default=None, min_length=1, description="Re-derives each proposal from the code")
 
 
 class Limits(Strict):
@@ -48,6 +51,7 @@ class Labels(Strict):
     error: str = "cardinal:error"
     needs_human: str = "cardinal:needs-human"
     investigate: str = "cardinal:investigate"
+    proposed: str = "cardinal:proposed"  # the scout's proposals; off the state axis, so the daemon ignores it
 
     def state_axis(self) -> list[str]:
         return [self.ready, self.working, self.done, self.error, self.needs_human, self.investigate]
@@ -67,6 +71,21 @@ class Monitor(Strict):
     min_occurrences: int = Field(ge=1, description="Error records a fingerprint needs within the window")
     window_hours: float = Field(gt=0)
     max_issues_per_pass: int = Field(ge=1, le=20, description="Caps an error storm, including the monitor's own")
+
+
+class Scout(Strict):
+    """`cardinal scout`: find, review and propose work. Every key is a decision; none defaults."""
+
+    autonomy: Literal["propose", "auto"] = Field(description="auto lets a category with a track record file ready")
+    categories: list[Literal["bug", "feature"]] = Field(min_length=1)
+    areas_per_pass: int = Field(ge=1, le=6, description="Areas surveyed per pass; the oldest-surveyed go first")
+    cooldown_days: float = Field(ge=0, description="An area surveyed this recently is skipped")
+    max_proposals_per_pass: int = Field(ge=1, le=10, description="Issues filed per pass; the rest wait for the next")
+    max_files: int = Field(ge=1, le=10, description="Files a proposal's fix may change")
+    repro: bool = Field(description="Bugs get a test that must fail on the base branch")
+    auto_min_decided: int = Field(ge=1, description="Proposals of a category approved or rejected in 60 days")
+    auto_min_approval: float = Field(ge=0, le=1)
+    auto_min_done: float = Field(ge=0, le=1, description="Share of a category's landed issues that ended done")
 
 
 class Repo(Strict):
@@ -95,8 +114,16 @@ class Config(Strict):
     logging: Logging
     ingest: Ingest | None = None
     monitor: Monitor | None = None
+    scout: Scout | None = None
     limits: Limits = Limits()
     repos: list[Repo] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def scout_models(self) -> "Config":
+        missing = [role for role in ("scout", "scout_reviewer") if getattr(self.models, role) is None]
+        if self.scout is not None and missing:
+            raise ValueError(f"[scout] needs [models] {', '.join(missing)}")
+        return self
 
     def repo(self, slug: str | None) -> Repo:
         if slug is None:

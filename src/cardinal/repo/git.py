@@ -81,6 +81,13 @@ def create_worktree(clone: Path, path: Path, branch: str, base: str) -> str:
     return base_sha
 
 
+def detached_worktree(clone: Path, path: Path, sha: str) -> None:
+    """A worktree at one commit with no branch, for work that is never pushed (the scout)."""
+    with lock(clone, "git"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        git(clone, "worktree", "add", "-q", "--detach", str(path), sha)
+
+
 def fetch_base(clone: Path, repo: Path, base: str) -> str:
     """Fetch the base branch from `repo` (the clone or one of its worktrees); returns its newest commit."""
     with lock(clone, "git"):

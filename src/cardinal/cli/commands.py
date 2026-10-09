@@ -18,6 +18,7 @@ from cardinal.logs import setup
 from cardinal.logs.record import LEVELS, LogRecord
 from cardinal.monitor import monitor
 from cardinal.repo.git import GitError, git
+from cardinal.scout import once as scout
 from cardinal.store import logs as stored_logs
 from cardinal.store.db import connect
 
@@ -63,6 +64,13 @@ def route(args, home: Home, config, db, sink):
     if args.command == "resume":
         action = "approve" if args.approve else "reject"
         return finish(app.resume(home, config, repo, db, args.issue, action, args.note))
+    if args.command == "scout":
+        if args.action == "status":
+            return scout.status(config, db, repo)
+        if args.once:
+            result = scout.once(home, config, db, repo)
+            return print_and(result, 1 if result.get("failure") else 0)
+        scout.serve(home, config, db, repo, args.interval)
     if args.command == "daemon":
         if args.once:
             results = loop.drain(home, config, repo, db, args.verbose)
@@ -117,7 +125,7 @@ def check(home: Home, config, repo) -> int:
     probe("base branch", lambda: _base(home, repo))
     probe("labels", lambda: issues.ensure_labels(repo.slug, repo.labels))
     probe("test command", lambda: _executable(repo.test_command[0]))
-    for role, spec in config.models.model_dump().items():
+    for role, spec in config.models.model_dump(exclude_none=True).items():
         probe(f"model {role}", lambda spec=spec: _model_key(spec))
     failed = any(value.startswith("FAILED") for value in results.values())
     return print_and({"repo": repo.slug, "checks": results, "ok": not failed}, 1 if failed else 0)

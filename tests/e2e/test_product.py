@@ -104,6 +104,13 @@ def test_monitor_files_triaged_issues_from_cardinal_crashes_and_app_records():
     assert len(report["checks"]) == 15
 
 
+def test_scout_proposes_checked_work_and_learns_from_outcomes():
+    """Two areas surveyed, then the third: a real defect is filed as proposed with its evidence; a
+    fabricated quote, a duplicate and a reviewer refusal are dropped; the cap holds the overflow; the
+    daemon leaves proposals alone; a held product decision goes to a person."""
+    harness("offline", "--scenario", "scout", timeout=900)
+
+
 def logs_cli(home: Path, *args: str):
     return run_bounded([sys.executable, "-m", "cardinal.cli.main", "--home", str(home), "logs", *args],
                        timeout=30, cwd=ROOT)

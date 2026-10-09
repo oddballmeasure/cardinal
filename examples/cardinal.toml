@@ -11,6 +11,8 @@ verifier = "openai:gpt-6-sol"
 pr_manager = "openai:gpt-6-sol"
 deployer = "openai:gpt-6-sol"
 monitor = "openai:gpt-6-sol"        # writes issue text for grouped errors; code decides what is filed
+scout = "openai:gpt-6-sol"          # plans survey areas, surveys them, writes repro tests; needed with [scout]
+scout_reviewer = "openai:gpt-6-sol" # re-derives each proposal from the code; needed with [scout]
 
 # Every Cardinal process writes LogRecords to $CARDINAL_HOME/logs/YYYY-MM-DD.jsonl and store.db.
 [logging]
@@ -30,6 +32,22 @@ token_env = "CARDINAL_INGEST_TOKEN"   # the name of the variable holding the bea
 min_occurrences = 3        # error records one fingerprint needs within the window; a crash needs one
 window_hours = 24
 max_issues_per_pass = 3    # stops an error storm from filing a flood of issues
+
+# `cardinal scout --repo X`: surveys a repository for small bugs and features, has each proposal
+# reviewed and checked against the code, and files it as cardinal:proposed. Swap that label for
+# cardinal:ready to approve, or close the issue with a comment to reject; the scout learns from
+# both. Omit the section to disable. Every key is required.
+[scout]
+autonomy = "propose"          # "auto" files ready for a category whose track record meets the auto_* bars
+categories = ["bug", "feature"]
+areas_per_pass = 2            # areas surveyed per pass, least recently surveyed first
+cooldown_days = 7             # an area surveyed this recently is skipped
+max_proposals_per_pass = 3    # the rest wait for the next pass
+max_files = 3                 # files a proposal's fix may change
+repro = true                  # bugs get a test that must fail on the base branch; auto needs one
+auto_min_decided = 10         # approved or rejected proposals of the category in the last 60 days
+auto_min_approval = 0.8
+auto_min_done = 0.7           # share of the category's landed issues that ended cardinal:done
 
 # Optional; these are the defaults.
 [limits]
