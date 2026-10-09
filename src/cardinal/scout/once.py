@@ -28,7 +28,7 @@ from cardinal.logs.context import bind
 from cardinal.repo.git import GitError, detached_worktree, ensure_clone, fetch_base, remove_worktree
 from cardinal.roles import profiler, scout, scout_planner, scout_repro, scout_reviewer
 from cardinal.roles.tests import run_repo_tests
-from cardinal.scout import outcomes, render
+from cardinal.scout import gate, outcomes, render
 from cardinal.scout.checks import evidence_problem, fingerprint, proposal_problem, similar
 from cardinal.store import scout as store
 from cardinal.store.db import now
@@ -72,6 +72,7 @@ class Pass:
     def execute(self) -> dict:
         run, repo, db = self.run, self.run.repo, self.run.db
         decided = outcomes.track(repo, db)
+        self.track_record = outcomes.track_record(db, repo.slug)
         issues.ensure_labels(repo.slug, repo.labels)  # lessons/labels-before-first-write.md
         ensure_clone(run.clone, repo.url, repo.base_branch)
         self.base_sha = fetch_base(run.clone, run.clone, repo.base_branch)
@@ -170,7 +171,10 @@ class Pass:
             run.recorder.event("scout", "repro", {"title": proposal.title, "ok": repro.ok, "reason": repro.reason})
             if repro.refuted:
                 return self.record(row_id, proposal, "dropped", verdict=review.verdict, repro_ok=0, reason=repro.reason)
-        mode, why = ("needs_human", review.reason) if review.verdict == "product_decision" else ("proposed", "")
+        if review.verdict == "product_decision":  # never work Cardinal may take on by itself
+            mode, why = "needs_human", ""
+        else:
+            mode, why = gate.decide(self.settings, self.track_record, proposal.category, repro and repro.ok)
         label = {"proposed": repo.labels.proposed, "auto": repo.labels.ready, "needs_human": repo.labels.needs_human}[mode]
         test_diff = repro.diff if repro and repro.ok else None
         text = render.body(proposal, evidence, review.reason, mode, why, repo.labels, fingerprint(proposal), test_diff)
@@ -212,6 +216,11 @@ def status(config: Config, db: sqlite3.Connection, repo: Repo) -> dict:
         raise ValueError("No [scout] section in cardinal.toml")
     undecided = [{"issue": row["issue"], "title": row["title"], "outcome": row["outcome"]}
                  for row in store.undecided(db, repo.slug)]
+    record = outcomes.track_record(db, repo.slug)
+    categories = {}
+    for category in config.scout.categories:
+        mode, why = gate.decide(config.scout, record, category, repro_ok=True)  # repro is judged per bug
+        categories[category] = {**record.get(category, {}), "gate": mode, "why": why}
     return {"repo": repo.slug, "autonomy": config.scout.autonomy, "window_days": WINDOW_DAYS,
-            "categories": outcomes.track_record(db, repo.slug), "open": undecided,
+            "categories": categories, "open": undecided,
             "held": [row["title"] for row in store.held(db, repo.slug)], "last_pass": store.last_pass(db, repo.slug)}

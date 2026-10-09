@@ -1,7 +1,7 @@
 """What became of each filed proposal, read back from its issue at the start of every pass.
 
 A person approves by swapping `proposed` for `ready` (or the daemon has already run it) and rejects
-by closing it; the closing comment is kept as the reason, and the next survey reads it. Landing is
+by closing it, auto-filed issues included; the closing comment is kept as the reason, and the next survey reads it. Landing is
 the daemon's done or error label. Product decisions are kept out of the track record."""
 
 import logging
@@ -24,7 +24,8 @@ def read(repo: Repo, db: sqlite3.Connection, row: sqlite3.Row) -> tuple[str | No
         return "done", None
     if labels.error in current:
         return "error", run["failure_kind"] if run else None
-    if labels.ready in current or labels.working in current or run is not None:
+    # An auto-filed issue starts ready: that is the scout's own decision, not a person's approval.
+    if row["filed_mode"] != "auto" and (labels.ready in current or labels.working in current or run is not None):
         return "approved", None
     if state == "CLOSED":
         return "rejected", issues.last_comment(repo.slug, row["issue"])[:1000] or "Closed without a comment"

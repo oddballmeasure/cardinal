@@ -5,11 +5,15 @@ Pass 1 (propose, cap 2): a real defect is filed with its evidence; a fabricated 
 of an open issue and a reviewer refusal are dropped; the overflow is held. A person then approves
 one proposal (label swap) and rejects the other (close with a comment). Pass 2 reads both back,
 hands the rejection reason to its survey, rotates to the area not yet surveyed and files the held
-product decision for a person. Pass 3 reads the approved issue's landing as done.
+product decision for a person. It runs with autonomy "auto" over a seeded record of landed bugs:
+a bug with a failing repro test goes straight to ready, a feature below its bars stays proposed,
+and a bug whose "failing" test passes on base is dropped. Pass 3 reads the approved issue's
+landing as done.
 """
 
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -92,7 +96,13 @@ def scenario(temp: Path, artifact: Path) -> dict:
     after["issues"][str(rejected.get("number"))].update(state="CLOSED", comments=[REJECTION])
     json_file(state_path, after)
 
-    write(product.home, bare, {**SCOUT, "max_proposals_per_pass": 5})
+    with sqlite3.connect(product.home / "store.db") as db:  # a track record from earlier passes: bugs landed
+        for number in range(3):
+            db.execute("INSERT INTO scout_proposals (repo, pass_id, fingerprint, category, title, proposal, status,"
+                       " filed_mode, issue, outcome, created_at, decided_at) VALUES (?, 'seed', ?, 'bug', ?, '{}',"
+                       " 'filed', 'proposed', ?, 'done', datetime('now'), strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))",
+                       (SLUG, f"seed-{number}", f"Seeded bug {number}", 900 + number))
+    write(product.home, bare, {**SCOUT, "autonomy": "auto", "max_proposals_per_pass": 5})
     code, second = product("scout", "--once", "--repo", SLUG)
     state = json.loads(state_path.read_text())
     read_back = {item["issue"]: item for item in second.get("outcomes", [])} if isinstance(second, dict) else {}
@@ -112,6 +122,13 @@ def scenario(temp: Path, artifact: Path) -> dict:
     expect(checks, "a bug whose new test passes on base is dropped as not reproduced",
            unknown.get("action") == "dropped" and unknown.get("repro_ok") == 0
            and "did not reproduce" in unknown.get("reason", "") and not filed(state, scout_replay.UNKNOWN.title), unknown)
+    malformed, count = filed(state, scout_replay.MALFORMED.title), filed(state, scout_replay.COUNT.title)
+    expect(checks, "auto: a bug with a track record and a failing repro is filed ready, saying why",
+           malformed.get("labels") == ["cardinal:ready"] and "Filed ready by Cardinal's scout: 4 decided bug" in
+           malformed.get("body", "") and "## Suggested test" in malformed.get("body", ""), malformed)
+    expect(checks, "auto: a feature below its bars stays proposed",
+           count.get("labels") == ["cardinal:proposed"] and "not auto: 1 decided feature" in
+           second_seen.get(scout_replay.COUNT.title, {}).get("reason", ""), second_seen.get(scout_replay.COUNT.title))
     expect(checks, "repro worktrees are always removed",
            not [path.name for path in (product.home / "worktrees").rglob("scout-*")], list((product.home / "worktrees").rglob("*"))[:5])
     expect(checks, "the held product decision is filed for a person, not as work",
@@ -126,8 +143,8 @@ def scenario(temp: Path, artifact: Path) -> dict:
            code == 0 and isinstance(third, dict) and third.get("areas") == [] and
            [item.get("outcome") for item in third.get("outcomes", [])] == ["done"], third)
     expect(checks, "scout status reports the track record per category",
-           code_status == 0 and categories.get("bug", {}).get("done") == 1 and categories.get("bug", {}).get("approval") == 1
-           and categories.get("feature", {}).get("rejected") == 1 and categories.get("feature", {}).get("approval") == 0,
+           code_status == 0 and categories.get("bug", {}).get("done") == 4 and categories.get("bug", {}).get("gate") == "auto"
+           and categories.get("feature", {}).get("rejected") == 1 and categories.get("feature", {}).get("gate") == "proposed",
            status)
 
     product.keep_store()

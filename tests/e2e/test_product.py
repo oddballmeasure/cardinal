@@ -105,10 +105,13 @@ def test_monitor_files_triaged_issues_from_cardinal_crashes_and_app_records():
 
 
 def test_scout_proposes_checked_work_and_learns_from_outcomes():
-    """Two areas surveyed, then the third: a real defect is filed as proposed with its evidence; a
-    fabricated quote, a duplicate and a reviewer refusal are dropped; the cap holds the overflow; the
-    daemon leaves proposals alone; a held product decision goes to a person."""
-    harness("offline", "--scenario", "scout", timeout=900)
+    """Two areas surveyed, then the third: a real defect is filed as proposed with its evidence and a
+    failing repro test; a fabricated quote, a duplicate, a reviewer refusal and an unreproduced bug
+    are dropped; the cap holds the overflow; the daemon leaves proposals alone; approval and rejection
+    are read back and the rejection reaches the next survey; in auto mode a bug with a track record
+    goes ready while a feature below its bars stays proposed; a held product decision goes to a person."""
+    report = harness("offline", "--scenario", "scout", timeout=900)
+    assert len(report["checks"]) == 18
 
 
 def logs_cli(home: Path, *args: str):
