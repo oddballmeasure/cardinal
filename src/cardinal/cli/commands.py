@@ -60,7 +60,7 @@ def route(args, home: Home, config, db, sink):
     if args.command == "repos":
         return check(home, config, repo)
     if args.command == "run":
-        return finish(app.start(home, config, repo, db, args.issue))
+        return finish(app.start(home, config, repo, db, args.issue, daemon=args.daemon_worker))
     if args.command == "resume":
         action = "approve" if args.approve else "reject"
         return finish(app.resume(home, config, repo, db, args.issue, action, args.note))

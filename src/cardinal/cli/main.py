@@ -27,6 +27,7 @@ def parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="Run one issue now, in the foreground")
     run.add_argument("issue", type=int)
     run.add_argument("--repo")
+    run.add_argument("--daemon-worker", action="store_true", help=argparse.SUPPRESS)
 
     status = sub.add_parser("status", help="Show runs")
     status.add_argument("issue", type=int, nargs="?")
@@ -75,12 +76,15 @@ def terminate(signum, frame):  # noqa: ANN001, ARG001
     ones are ignored: a worker run can be sent SIGTERM by both systemd and its daemon, and a second
     SystemExit would cut its settle short."""
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     raise SystemExit(128 + signum)
 
 
 def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, terminate)
     args = parser().parse_args(argv)
+    if args.command == "daemon" or (args.command == "run" and args.daemon_worker):
+        signal.signal(signal.SIGINT, terminate)
     logging.basicConfig(level=logging.WARNING - 10 * min(args.verbose, 2),
                         format="%(asctime)s %(levelname)s %(name)s %(message)s", stream=sys.stderr)
     try:

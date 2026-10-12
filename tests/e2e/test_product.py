@@ -82,6 +82,11 @@ def test_parallel_workers_plan_one_at_a_time_and_land_sibling_merges():
     assert len(report["checks"]) == 8
 
 
+def test_graceful_daemon_restart_requeues_serial_and_parallel_runs_for_both_signals():
+    report = harness("offline", "--scenario", "daemon-restart", timeout=1800)
+    assert len(report["checks"]) == 12
+
+
 def test_a_killed_worker_is_settled_by_the_next_poll_and_reruns():
     report = harness("offline", "--scenario", "worker-killed", timeout=900)
     assert len(report["checks"]) == 4

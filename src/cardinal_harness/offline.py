@@ -9,6 +9,7 @@
 `post-merge`: checks that fail on merge commits are re-run once; a repeat failure files a follow-up.
 `parallel`: three workers: #11, #17 and #18 overlap, #12 waits for #11, planning never overlaps, and
           #17 and #18 both append to the README, so the later merge brings in the earlier one.
+`daemon-restart`: graceful daemon SIGTERM/SIGINT mid-run requeues serial and parallel workers.
 `worker-killed`: a run killed outright is settled as failed by the next daemon poll, then reruns.
 `scout`: `cardinal scout` proposes reviewed, code-checked issues and learns from their outcomes.
 Every pass is judged from outside: fake-GitHub state, the bare remote's refs, `status --json`,
@@ -465,6 +466,65 @@ def parallel(temp: Path, artifact: Path) -> dict:
     return {"checks": checks, "invocations": product.invocations}
 
 
+def daemon_restart(temp: Path, artifact: Path) -> dict:
+    """Stop a real daemon mid-run, then drain the same issue without touching its labels.
+    Cover both the in-process run and the daemon's CLI worker, under both graceful signals."""
+    checks: dict = {}
+    for parallel, signum in ((False, signal.SIGTERM), (True, signal.SIGTERM),
+                             (False, signal.SIGINT), (True, signal.SIGINT)):
+        name = f"{'parallel' if parallel else 'serial'}-{signum.name.lower()}"
+        root = temp / name
+        root.mkdir()
+        bare, state_path, _ = world(root, ready=[104])
+        product = configure(root, bare, state_path, artifact / name, max_parallel_runs=2 if parallel else None)
+        output = artifact / f"{name}-daemon.log"
+        command = [sys.executable, "-m", "cardinal.cli.main", "--home", str(product.home),
+                   "daemon", "--interval", "1"]
+        with output.open("w") as log_file:
+            daemon_process = subprocess.Popen(command, env=product.env, start_new_session=True,
+                                              stdout=log_file, stderr=log_file)
+            try:
+                deadline = time.monotonic() + 120
+                observed = []
+                while time.monotonic() < deadline and daemon_process.poll() is None:
+                    observed = product.status(104)
+                    if observed and observed[-1]["status"] == "running" and observed[-1]["branch"]:
+                        break
+                    time.sleep(0.2)
+                mid_run = bool(observed and observed[-1]["status"] == "running" and observed[-1]["branch"])
+                expect(checks, f"{name}: daemon reached an in-flight run", mid_run, observed)
+                daemon_process.send_signal(signum)
+                try:
+                    daemon_process.wait(timeout=90)
+                except subprocess.TimeoutExpired:
+                    os.killpg(daemon_process.pid, signal.SIGKILL)
+                    daemon_process.wait()
+            finally:
+                if daemon_process.poll() is None:
+                    os.killpg(daemon_process.pid, signal.SIGKILL)
+                    daemon_process.wait()
+        before = product.status(104)
+        issue_before = json.loads(state_path.read_text())["issues"]["104"]
+        expect(checks, f"{name}: shutdown requeued and released its claim",
+               mid_run and daemon_process.returncode == 128 + signum
+               and len(before) == 1 and before[0]["status"] == "interrupted"
+               and issue_before["labels"] == ["cardinal:ready"],
+               {"exit": daemon_process.returncode, "runs": before, "issue": issue_before, "log": str(output)})
+        code, results = product("daemon", "--once", timeout=900)
+        state = json.loads(state_path.read_text())
+        issue = state["issues"]["104"]
+        labels_added = [call[call.index("--add-label") + 1] for call in state.get("calls", [])
+                        if call[:3] == ["issue", "edit", "104"] and "--add-label" in call]
+        expect(checks, f"{name}: restart finishes without manual relabel or error",
+               code == 0 and isinstance(results, list) and [item.get("status") for item in results] == ["done"]
+               and len(product.status(104)) == 2 and issue["state"] == "CLOSED"
+               and issue["labels"] == ["cardinal:done"] and "cardinal:error" not in labels_added,
+               {"results": results, "issue": issue, "labels_added": labels_added})
+        product.keep_store()
+        json_file(artifact / name / "github_state.json", state)
+    return {"checks": checks}
+
+
 def worker_killed(temp: Path, artifact: Path) -> dict:
     """A run killed outright (SIGKILL, as the OOM killer would) never releases its claim. The next
     daemon poll settles it as failed and labels it; requeued, the issue runs again to done."""
@@ -619,7 +679,8 @@ def scout(temp: Path, artifact: Path) -> dict:
 
 SCENARIOS = {"single": single, "daemon": daemon, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
-             "parallel": parallel, "worker-killed": worker_killed, "scout": scout, "documentation": documentation}
+             "parallel": parallel, "daemon-restart": daemon_restart, "worker-killed": worker_killed,
+             "scout": scout, "documentation": documentation}
 
 
 def run(scenario: str, artifact: Path) -> dict:
