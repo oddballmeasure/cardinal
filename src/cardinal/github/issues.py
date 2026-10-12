@@ -2,7 +2,7 @@
 
 from cardinal.config.models import Labels
 from cardinal.contracts.issue import Issue
-from cardinal.github.gh import gh, gh_json
+from cardinal.github.gh import gh, gh_json, signed
 
 # Colors match oddballmeasure/cardinal_test_repo so every repository shows the same state axis.
 LABEL_STYLES = {
@@ -64,7 +64,7 @@ def ensure_labels(repo: str, labels: Labels) -> None:
 
 
 def create(repo: str, title: str, body: str, labels: tuple[str, ...] = ()) -> int:
-    url = gh("issue", "create", "-R", repo, "--title", title, "--body", body,
+    url = gh("issue", "create", "-R", repo, "--title", title, "--body", signed(body),
              *(arg for label in labels for arg in ("--label", label))).strip().splitlines()[-1]
     return int(url.rstrip("/").rsplit("/", 1)[1])
 

@@ -11,7 +11,7 @@ from langchain_core.tools import tool
 
 from cardinal.contracts.pr import PRResult
 from cardinal.contracts.verdict import Verdict
-from cardinal.github.gh import GhError, gh, gh_json
+from cardinal.github.gh import GhError, gh, gh_json, signed
 from cardinal.locks import lock
 
 
@@ -112,7 +112,7 @@ class PRService:
             if f"closes #{self.closes}" not in body.lower():
                 body = f"Closes #{self.closes}\n\n{body}"
             gh("pr", "create", "-R", self.repo, "--head", self.branch, "--base", self.base,
-               "--title", title, "--body", body)
+               "--title", title, "--body", signed(body))
             pr = self._open_pr()
             if pr is None or pr["headRefOid"] != self.head_sha:
                 raise GhError("Created PR is missing or does not point at the verified head")
