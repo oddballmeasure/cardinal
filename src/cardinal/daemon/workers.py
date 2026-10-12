@@ -38,7 +38,7 @@ class Worker:
         self.number = number
         self.output = tempfile.TemporaryFile(mode="w+")
         command = [sys.executable, "-m", "cardinal.cli.main", "--home", str(home.root), *["-v"] * verbose,
-                   "run", str(number), "--repo", repo.slug]
+                   "run", str(number), "--repo", repo.slug, "--daemon-worker"]
         # Its own session: Ctrl-C on the daemon reaches workers once, through stop(), not twice.
         self.process = subprocess.Popen(command, stdout=self.output, text=True, start_new_session=True)
         log.info("started worker %s for issue #%s", self.process.pid, number,
@@ -128,7 +128,8 @@ def reap(repo: Repo, db: sqlite3.Connection, silent: list[int]) -> list[dict]:
 
 
 def stop(running: dict[int, Worker]) -> None:
-    """Stopping the daemon stops its workers; each settles its run as interrupted, like a foreground run."""
+    """Stop workers and let them requeue interrupted issues before exiting. A worker killed after
+    the grace period still keeps its claim for the abandoned-crash recovery on the next poll."""
     for worker in running.values():
         if worker.process.poll() is None:
             worker.process.terminate()

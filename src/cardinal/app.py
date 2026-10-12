@@ -35,7 +35,7 @@ def checkpointer(home: Home):
         connection.close()
 
 
-def start(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, number: int) -> dict:
+def start(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, number: int, *, daemon: bool = False) -> dict:
     """Run one issue from the top. Refuses an issue another run has claimed."""
     issue, _, state = issues.view(repo.slug, number)
     if state != "OPEN":
@@ -50,9 +50,24 @@ def start(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, number
     except Exception:
         inputs.release(db, repo.slug, number)  # a claim nobody is driving would block the issue forever
         raise
+    except (KeyboardInterrupt, SystemExit):
+        # Even an interruption during setup must not strand the claim.
+        try:
+            if daemon:
+                interrupt(repo, db, run_id, number)
+        finally:
+            inputs.release(db, repo.slug, number)
+        raise
     run = Run(home, config, repo, db, Recorder(db, run_id), run_id, issue)
-    run.recorder.event("run", "started", {"issue": issue.model_dump(), "thread_id": thread_id})
-    return drive(run, thread_id, {"status": "running"})
+    try:
+        run.recorder.event("run", "started", {"issue": issue.model_dump(), "thread_id": thread_id})
+        return drive(run, thread_id, {"status": "running"}, daemon=daemon)
+    except (KeyboardInterrupt, SystemExit):
+        if daemon:
+            interrupt(repo, db, run_id, number)
+        raise
+    finally:
+        inputs.release(db, repo.slug, number)
 
 
 def resume(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, number: int, action: str, note: str) -> dict:
@@ -69,7 +84,10 @@ def resume(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, numbe
         inputs.release(db, repo.slug, number)
         raise
     run = Run(home, config, repo, db, Recorder(db, row["run_id"]), row["run_id"], issue)
-    return drive(run, row["thread_id"], Command(resume={"action": action, "note": note}))
+    try:
+        return drive(run, row["thread_id"], Command(resume={"action": action, "note": note}))
+    finally:
+        inputs.release(db, repo.slug, number)
 
 
 def triage(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, number: int) -> dict:
@@ -122,36 +140,43 @@ def abandon(repo: Repo, db: sqlite3.Connection, claim: sqlite3.Row) -> dict:
     return {"run_id": run_id, "issue": number, "status": "failed", "failure": failure}
 
 
-def drive(run: Run, thread_id: str, payload) -> dict:
+def interrupt(repo: Repo, db: sqlite3.Connection, run_id: str, number: int) -> None:
+    """A daemon stop abandons this attempt, not the issue. Keep its worktree for the next
+    fresh run to replace, and keep the claim until the ready label has been restored."""
+    runs.update(db, run_id, status="interrupted", ended_at=now())
+    Recorder(db, run_id).event("run", "interrupted", {})
+    issues.set_state(repo.slug, number, repo.labels, repo.labels.ready)
+    log.warning("run %s interrupted by daemon shutdown", run_id, extra={"event": "run_interrupted"})
+
+
+def drive(run: Run, thread_id: str, payload, *, daemon: bool = False) -> dict:
     # Each verify and CI repair round revisits nodes; LangGraph's default of 25 steps is too tight.
     config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
     with bind(run_id=run.run_id, issue=run.issue.number):
-        return _drive(run, config, payload)
+        return _drive(run, config, payload, daemon=daemon)
 
 
-def _drive(run: Run, config: dict, payload) -> dict:
+def _drive(run: Run, config: dict, payload, *, daemon: bool = False) -> dict:
     try:
-        try:
-            with checkpointer(run.home) as saver:
-                graph = build(run, saver)
-                graph.invoke(payload, config=config)
-                snapshot = graph.get_state(config)
-            values, paused = snapshot.values, bool(snapshot.next)
-        except Exception as exc:  # noqa: BLE001 - the graph itself failed; the run row and labels still settle
-            log.exception("run %s crashed outside a node", run.run_id, extra={"event": "run_crashed",
-                                                                               "failure_kind": FailureKind.CRASH.value})
-            values = {"status": "failed", "failure": {"kind": FailureKind.CRASH.value, "detail": repr(exc)[:2000],
-                                                      "stage": "graph"}}
-            paused = False
-        except (KeyboardInterrupt, SystemExit):
+        with checkpointer(run.home) as saver:
+            graph = build(run, saver)
+            graph.invoke(payload, config=config)
+            snapshot = graph.get_state(config)
+        values, paused = snapshot.values, bool(snapshot.next)
+    except Exception as exc:  # noqa: BLE001 - the graph itself failed; the run row and labels still settle
+        log.exception("run %s crashed outside a node", run.run_id, extra={"event": "run_crashed",
+                                                                           "failure_kind": FailureKind.CRASH.value})
+        values = {"status": "failed", "failure": {"kind": FailureKind.CRASH.value, "detail": repr(exc)[:2000],
+                                                  "stage": "graph"}}
+        paused = False
+    except (KeyboardInterrupt, SystemExit):
+        if not daemon:
             log.warning("run %s interrupted", run.run_id, extra={"event": "run_interrupted"})
-            # Stopped from outside. Record it and put the issue in the error queue, then keep stopping.
+            # Foreground runs keep the original interrupted-crash behavior.
             settle(run, {"status": "failed", "failure": {"kind": FailureKind.CRASH.value, "stage": "interrupted",
-                                                         "detail": "Cardinal was stopped during this run"}}, False)
-            raise
-        return settle(run, values, paused)
-    finally:
-        inputs.release(run.db, run.repo.slug, run.issue.number)
+                                                     "detail": "Cardinal was stopped during this run"}}, False)
+        raise
+    return settle(run, values, paused)
 
 
 def settle(run: Run, values: dict, paused: bool) -> dict:

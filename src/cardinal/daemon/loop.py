@@ -59,7 +59,7 @@ def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, verbos
         attempted.add(number)
         log.info("claiming issue #%s", number)
         try:
-            results.append(app.start(home, config, repo, db, number))
+            results.append(app.start(home, config, repo, db, number, daemon=True))
         except ValueError as exc:  # already claimed or closed: not ours to run this time
             log.warning("skipped issue #%s: %s", number, exc, extra={"event": "issue_skipped", "data": {"issue": number}})
             results.append({"issue": number, "status": "skipped", "reason": str(exc)})
