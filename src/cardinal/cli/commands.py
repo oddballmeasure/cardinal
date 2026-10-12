@@ -63,9 +63,12 @@ def route(args, home: Home, config, db, sink):
             failed = any(item["status"] == "failed" for item in results)
             return print_and(results, 1 if failed else 0)
         loop.serve(home, config, repos, db, args.interval, args.verbose)
-    repo = config.repo(args.repo)
     if args.command == "repos":
-        return check(home, config, repo)
+        if args.repo:
+            return check(home, config, config.repo(args.repo))
+        results = [check_result(home, config, repo) for repo in config.repos]
+        return print_and(results, 1 if any(not result["ok"] for result in results) else 0)
+    repo = config.repo(args.repo)
     if args.command == "run":
         return finish(app.start(home, config, repo, db, args.issue, daemon=args.daemon_worker))
     if args.command == "resume":
@@ -111,6 +114,11 @@ def init(home: Home, slug: str) -> dict:
 
 
 def check(home: Home, config, repo) -> int:
+    result = check_result(home, config, repo)
+    return print_and(result, 0 if result["ok"] else 1)
+
+
+def check_result(home: Home, config, repo) -> dict:
     results: dict[str, str] = {}
 
     def probe(name: str, action) -> None:
@@ -129,7 +137,7 @@ def check(home: Home, config, repo) -> int:
     for role, spec in config.models.model_dump(exclude_none=True).items():
         probe(f"model {role}", lambda spec=spec: _model_key(spec))
     failed = any(value.startswith("FAILED") for value in results.values())
-    return print_and({"repo": repo.slug, "checks": results, "ok": not failed}, 1 if failed else 0)
+    return {"repo": repo.slug, "checks": results, "ok": not failed}
 
 
 def _base(home: Home, repo) -> str:

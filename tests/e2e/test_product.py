@@ -52,6 +52,11 @@ def test_unpinned_daemon_drains_two_repositories_and_pinned_daemon_isolates_one(
     assert len(report["checks"]) == 6
 
 
+def test_repos_check_reports_every_repository_and_fails_on_any_probe():
+    report = harness("offline", "--scenario", "repos-check", timeout=120)
+    assert len(report["checks"]) == 3
+
+
 def test_failed_ci_leaves_pr_open_and_main_untouched():
     """Two required checks, one fails: the failure names only that one."""
     harness("offline", "--scenario", "ci-failure", timeout=900)

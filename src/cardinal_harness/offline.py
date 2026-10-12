@@ -210,6 +210,54 @@ def daemon(temp: Path, artifact: Path) -> dict:
     return {"checks": checks, "invocations": product.invocations}
 
 
+def repos_check(temp: Path, artifact: Path) -> dict:
+    """Check two remotes through the CLI, including a missing branch in only one."""
+    second = "example/other-ledger"
+    bare, state_path, state = world(temp, ready=[])
+    other_dir = temp / "other"
+    other_dir.mkdir()
+    other_bare, _, other = world(other_dir, ready=[])
+    other["repository"] = second
+    state["other_repos"] = {second: other}
+    json_file(state_path, state)
+    product = configure(temp, bare, state_path, artifact)
+    config = product.home / "cardinal.toml"
+    with config.open("a") as output:
+        output.write(f'\n[[repos]]\nslug = "{second}"\nremote_url = {json.dumps(str(other_bare))}\n'
+                     'base_branch = "main"\ntest_command = ["git", "--version"]\n'
+                     'required_checks = []\npaths_off_limits = []\npaths_hidden = []\n')
+    checks: dict = {}
+    code, passed = product("repos", "check")
+    expect(checks, "unpinned check reports both healthy repositories",
+           code == 0 and isinstance(passed, list) and [item.get("repo") for item in passed] == [SLUG, second]
+           and all(item.get("ok") and item.get("checks") and
+                   all(value.startswith("ok") for value in item["checks"].values()) for item in passed), passed)
+
+    # Break only the second remote's base-branch probe; the first still passes.
+    text = config.read_text()
+    before, separator, after = text.rpartition('base_branch = "main"')
+    assert separator
+    config.write_text(before + 'base_branch = "missing"' + after)
+    code, partial = product("repos", "check")
+    expect(checks, "one failed probe cannot mask the other repository or its successful checks",
+           code == 1 and isinstance(partial, list) and len(partial) == 2
+           and [item.get("repo") for item in partial] == [SLUG, second]
+           and partial[0].get("ok") is True and partial[1].get("ok") is False
+           and partial[1].get("checks", {}).get("base branch", "").startswith("FAILED")
+           and partial[1]["checks"].get("repository", "").startswith("ok")
+           and partial[1]["checks"].get("test command", "").startswith("ok"), partial)
+
+    calls_before = len(json.loads(state_path.read_text())["calls"])
+    code, pinned = product("repos", "check", "--repo", SLUG)
+    new_calls = json.loads(state_path.read_text())["calls"][calls_before:]
+    expect(checks, "pinned check probes only the selected repository",
+           code == 0 and isinstance(pinned, dict) and pinned.get("repo") == SLUG and pinned.get("ok") is True
+           and all(second not in call for call in new_calls), {"result": pinned, "calls": new_calls})
+    product.keep_store()
+    json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
+    return {"checks": checks, "invocations": product.invocations}
+
+
 def multi_daemon(temp: Path, artifact: Path) -> dict:
     """Two independent remotes share issue #19, but not labels, clones, claims or worker limits."""
     second = "example/other-ledger"
@@ -744,7 +792,7 @@ def scout(temp: Path, artifact: Path) -> dict:
     return scenario(temp, artifact)
 
 
-SCENARIOS = {"single": single, "daemon": daemon, "multi-daemon": multi_daemon, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
+SCENARIOS = {"single": single, "daemon": daemon, "multi-daemon": multi_daemon, "repos-check": repos_check, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
              "parallel": parallel, "daemon-restart": daemon_restart, "worker-killed": worker_killed,
              "scout": scout, "documentation": documentation}
