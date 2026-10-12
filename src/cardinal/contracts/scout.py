@@ -22,6 +22,7 @@ class Evidence(BaseModel):
     line_start: int = Field(ge=1)
     line_end: int = Field(ge=1)
     quote: str = Field(min_length=8, description="Text copied exactly from those lines")
+    corrected_from: tuple[int, int] | None = Field(default=None, description="Original cited range, if corrected by code")
 
 
 class Proposal(BaseModel):

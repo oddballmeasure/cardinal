@@ -22,17 +22,34 @@ def normalise(text: str) -> str:
 
 
 def locate(lines: list[str], item: Evidence) -> tuple[int, int] | None:
-    """The cited range if it holds the quote, else the nearest range of the same length within DRIFT
-    lines that does. The quote itself must be in the file either way."""
+    """Find actual quote occurrences, preferring one close to the citation or unique in the file."""
     quote = normalise(item.quote)
-    span = max(item.line_end - item.line_start, item.quote.strip("\n").count("\n"))
-    starts = sorted(range(max(1, item.line_start - DRIFT), item.line_start + DRIFT + 1),
-                    key=lambda start: abs(start - item.line_start))
-    for start in starts:
-        end = min(start + span, len(lines))
-        if quote in normalise("\n".join(lines[start - 1:end])):
-            return start, end
-    return None
+    if not quote:
+        return None
+    # Join non-whitespace runs exactly as normalise does, retaining the source line for each
+    # character so a match shorter than the cited span has its own precise range.
+    text, line_numbers = [], []
+    for line_no, line in enumerate(lines, 1):
+        for token in re.finditer(r"\S+", line):
+            if text:
+                text.append(" ")
+                line_numbers.append(line_no)
+            text.append(token.group())
+            line_numbers.extend([line_no] * len(token.group()))
+    source = "".join(text)
+    found = []
+    offset = 0
+    while (offset := source.find(quote, offset)) != -1:
+        found.append((line_numbers[offset], line_numbers[offset + len(quote) - 1]))
+        offset += 1  # count occurrences, not overlapping windows containing the same occurrence
+    def distance(match: tuple[int, int]) -> int:
+        start, end = match
+        return max(item.line_start - end, start - item.line_end, 0)
+
+    nearby = [match for match in found if distance(match) <= DRIFT]
+    if nearby:
+        return min(nearby, key=distance)
+    return found[0] if len(found) == 1 else None
 
 
 def evidence_problem(worktree: Path, items: list[Evidence], tracked: set[str], repo: Repo) -> str | None:
@@ -47,12 +64,15 @@ def evidence_problem(worktree: Path, items: list[Evidence], tracked: set[str], r
         if not 0 <= item.line_end - item.line_start < MAX_SPAN:
             return f"evidence {where} is not a range of 1-{MAX_SPAN} lines"
         lines = source.read_text(errors="replace").splitlines()
-        if item.line_start > len(lines):
-            return f"evidence {where} is past the end of the file ({len(lines)} lines)"
         found = locate(lines, item)
         if found is None:
+            if item.line_start > len(lines):
+                return f"evidence {where} is past the end of the file ({len(lines)} lines)"
             return f"evidence {where} does not contain the quoted text, nor do the {DRIFT} lines around it"
-        item.line_start, item.line_end = found
+        if found != (item.line_start, item.line_end):
+            if item.corrected_from is None:
+                item.corrected_from = (item.line_start, item.line_end)
+            item.line_start, item.line_end = found
     return None
 
 

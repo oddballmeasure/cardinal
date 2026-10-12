@@ -21,8 +21,11 @@ def body(proposal: Proposal, evidence: list[Evidence], review: str, mode: str, w
          fingerprint: str, test_diff: str | None) -> str:
     parts = ["## Problem", proposal.problem.strip(), "", "## Evidence"]
     for item in evidence:
-        parts += [f"`{item.path}:{item.line_start}`" + (f"-{item.line_end}" if item.line_end != item.line_start else ""),
-                  fence(item.quote), ""]
+        citation = f"`{item.path}:{item.line_start}" + (f"-{item.line_end}" if item.line_end != item.line_start else "") + "`"
+        if item.corrected_from is not None:
+            start, end = item.corrected_from
+            citation += f" (lines corrected from {start}" + (f"-{end}" if end != start else "") + ")"
+        parts += [citation, fence(item.quote), ""]
     parts += ["## Expected", proposal.expected.strip(), "", "## Acceptance",
               *(f"- [ ] {item}" for item in proposal.acceptance), "", "## Files", *(f"- `{path}`" for path in proposal.files)]
     if test_diff:
