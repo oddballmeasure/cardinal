@@ -23,6 +23,7 @@ import json
 import os
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -782,6 +783,55 @@ def documentation(temp: Path, artifact: Path) -> dict:
     return {"checks": checks, "invocations": product.invocations}
 
 
+def file_tool_refusal(temp: Path, artifact: Path) -> dict:
+    """A coder meets refused paths, reads the errors, and still finishes a real CLI issue run."""
+    bare, state_path, _ = world(temp, ready=[19], ci=["success"])
+    outside = temp / "outside-secret"
+    outside.write_text("PRIVATE OUTSIDE CONTENT")
+    seed = temp / "seed"
+    (seed / "hidden.txt").write_text("PRIVATE HIDDEN CONTENT")
+    (seed / "app" / "[...slug]").mkdir(parents=True)
+    (seed / "app" / "[...slug]" / "page.tsx").write_text("export default function Page() {}\n")
+    (seed / "outbound").symlink_to(outside)
+    git(seed, "add", "-A")
+    git(seed, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "sandbox paths")
+    git(seed, "push", str(bare), "HEAD:main")
+    product = configure(temp, bare, state_path, artifact, required_checks=[],
+                        env={"CARDINAL_REPLAY_FILE_REFUSALS": "1"})
+    config = product.home / "cardinal.toml"
+    config.write_text(config.read_text().replace('paths_hidden = []', 'paths_hidden = ["hidden.txt"]'))
+    code, result = product("run", "19")
+    state = json.loads(state_path.read_text())
+    run = product.status(19)[-1]
+    with sqlite3.connect(product.home / "store.db") as db:
+        row = db.execute("SELECT transcript FROM agent_calls WHERE run_id = ? AND stage = 'coder' ORDER BY rowid LIMIT 1",
+                         (run["run_id"],)).fetchone()
+    messages = json.loads(row[0]) if row else []
+    # The scripted coder makes exactly one tool call per model turn.
+    results = [message["content"] for message in messages if message["type"] == "tool"]
+    checks: dict = {}
+    expect(checks, "CLI issue finishes done after the first refused call",
+           code == 0 and result.get("status") == "done" and state["issues"]["19"]["labels"] == ["cardinal:done"],
+           result)
+    expect(checks, "first coder tool result records a traversal refusal",
+           bool(results) and "Path traversal not allowed" in results[0], results[:2])
+    for index, description in enumerate(("tilde", "outside absolute", "outbound symlink read", "traversal write",
+                                         "tilde write", "outside write", "outbound symlink write", "hidden read",
+                                         "hidden write", "off-limits write", "context write", "skills write"), 1):
+        expect(checks, f"{description} was refused", len(results) > index and
+               any(word in results[index].lower() for word in ("error", "refus", "limit", "read-only", "outside",
+                                                                  "denied", "traversal", "not allowed")),
+               results[index] if len(results) > index else results)
+    expect(checks, "component name is readable or recoverably refused", len(results) > 13 and
+           ("export default" in results[13] or "error" in results[13].lower()), results[13:14])
+    expect(checks, "coder recovered to a permitted README read", len(results) > 14 and
+           "ledger" in results[14].lower(), results[14:15])
+    expect(checks, "no outside file was modified", outside.read_text() == "PRIVATE OUTSIDE CONTENT"
+           and not (temp / "escaped").exists() and not (seed / "escaped").exists())
+    product.keep_store()
+    return {"checks": checks, "invocations": product.invocations}
+
+
 def monitor(temp: Path, artifact: Path) -> dict:
     from cardinal_harness.monitor_scenario import scenario  # imports offline; kept local to avoid a cycle
     return scenario(temp, artifact)
@@ -795,7 +845,7 @@ def scout(temp: Path, artifact: Path) -> dict:
 SCENARIOS = {"single": single, "daemon": daemon, "multi-daemon": multi_daemon, "repos-check": repos_check, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
              "parallel": parallel, "daemon-restart": daemon_restart, "worker-killed": worker_killed,
-             "scout": scout, "documentation": documentation}
+             "scout": scout, "documentation": documentation, "file-tool-refusal": file_tool_refusal}
 
 
 def run(scenario: str, artifact: Path) -> dict:
