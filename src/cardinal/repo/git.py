@@ -7,6 +7,7 @@ import hashlib
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 import cardinal
@@ -25,6 +26,16 @@ CREDENTIALS = {
 
 class GitError(RuntimeError):
     pass
+
+
+PUSH_ATTEMPTS = 3
+PUSH_BACKOFF_SECONDS = 0.25
+PUSH_PERMANENT = re.compile(r"non-fast-forward|fetch first|stale info|protected branch|protected\b|"
+                            r"permission denied|access denied|403\b|forbidden|not permitted|"
+                            r"pre-receive hook declined", re.IGNORECASE)
+PUSH_TRANSIENT = re.compile(r"remote rejected\].*\(failure\)|fatal error in commit_refs|"
+                            r"\b(?:http\s*)?5\d\d\b|connection reset|connection was reset|"
+                            r"remote end hung up unexpectedly", re.IGNORECASE)
 
 
 def run_git(repo: Path, *args: str, timeout: int = 120, codes: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess:
@@ -149,11 +160,27 @@ def publish(clone: Path, worktree: Path, branch: str) -> str:
 def _publish(worktree: Path, branch: str) -> str:
     sha = head(worktree)
     previous = remote_sha(worktree, branch)
-    if previous is None:
-        git(worktree, "push", "-q", "origin", f"HEAD:refs/heads/{branch}", timeout=300)
-    elif previous != sha:
-        git(worktree, "push", "-q", f"--force-with-lease=refs/heads/{branch}:{previous}",
-            "origin", f"HEAD:refs/heads/{branch}", timeout=300)
+    if previous != sha:
+        args = ("push", "-q", *((f"--force-with-lease=refs/heads/{branch}:{previous}",) if previous else ()),
+                "origin", f"HEAD:refs/heads/{branch}")
+        for attempt in range(1, PUSH_ATTEMPTS + 1):
+            try:
+                git(worktree, *args, timeout=300)
+            except (GitError, subprocess.TimeoutExpired) as exc:
+                # A failed client response does not prove the server did not update the ref.
+                # Never turn a retry into a fresh lease on a different remote head.
+                observed = remote_sha(worktree, branch)
+                if observed == sha:
+                    break
+                if observed != previous:
+                    raise GitError(f"Remote {branch} moved from {previous} to {observed} during push") from exc
+                transient = isinstance(exc, subprocess.TimeoutExpired) or (
+                    not PUSH_PERMANENT.search(str(exc)) and bool(PUSH_TRANSIENT.search(str(exc))))
+                if not transient or attempt == PUSH_ATTEMPTS:
+                    raise GitError(f"Push of {branch} failed after {attempt} attempt(s): {exc}") from exc
+                time.sleep(PUSH_BACKOFF_SECONDS * 2 ** (attempt - 1))
+            else:
+                break
     if remote_sha(worktree, branch) != sha:
         raise GitError(f"Remote {branch} does not hold {sha} after push")
     return sha

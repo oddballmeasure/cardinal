@@ -63,6 +63,11 @@ def test_gh_transient_failures_retry_but_permanent_failures_do_not():
     assert len(report["checks"]) == 7
 
 
+def test_verified_branch_push_recovers_from_transient_remote_failure_without_retrying_permanent_rejections():
+    report = harness("offline", "--scenario", "push-retries", timeout=1200)
+    assert len(report["checks"]) == 11
+
+
 def test_repos_check_reports_every_repository_and_fails_on_any_probe():
     report = harness("offline", "--scenario", "repos-check", timeout=120)
     assert len(report["checks"]) == 3
