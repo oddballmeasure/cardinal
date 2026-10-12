@@ -309,7 +309,27 @@ def coder(context: dict, title: str):
         writes = {path: source.read_text() + "\n# Transaction filtering is described here.\n"}
     else:
         writes = writes_for(ticket_id)
+    probes = []
+    if os.environ.get("CARDINAL_REPLAY_FILE_REFUSALS") == "1":
+        probes = [call(tool, args, f"probe-{index}") for index, (tool, args) in enumerate([
+            ("read_file", {"file_path": "/repo/../etc/passwd"}),
+            ("read_file", {"file_path": "~/secret"}),
+            ("read_file", {"file_path": "/etc/passwd"}),
+            ("read_file", {"file_path": "/repo/outbound"}),
+            ("write_file", {"file_path": "/repo/../escaped", "content": "escape"}),
+            ("write_file", {"file_path": "~/escaped", "content": "escape"}),
+            ("write_file", {"file_path": "/etc/cardinal-escaped", "content": "escape"}),
+            ("write_file", {"file_path": "/repo/outbound", "content": "escape"}),
+            ("read_file", {"file_path": "/repo/hidden.txt"}),
+            ("write_file", {"file_path": "/repo/hidden.txt", "content": "escape"}),
+            ("write_file", {"file_path": "/repo/.github/protected", "content": "escape"}),
+            ("write_file", {"file_path": "/context/issue.json", "content": "escape"}),
+            ("write_file", {"file_path": "/skills/CONVENTIONS.md", "content": "escape"}),
+            ("read_file", {"file_path": "/repo/app/[...slug]/page.tsx"}),
+            ("read_file", {"file_path": "/repo/README.md"}),
+        ])]
     return Scripted(messages=iter([
+        *probes,
         call("read_file", {"file_path": "/skills/coder/SKILL.md"}, "skill"),
         call("read_file", {"file_path": "/context/ticket.json"}, "ticket"),
         *(call("write_file", {"file_path": f"/repo/{path}", "content": content}, f"write-{index}")

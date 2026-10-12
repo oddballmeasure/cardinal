@@ -31,7 +31,74 @@ def under(path: str, prefixes: list[str]) -> bool:
     return any(relative == prefix or relative.startswith(prefix + "/") for prefix in cleaned)
 
 
-class ReadOnlyBackend(FilesystemBackend):
+def sandbox_refusal(exc: ValueError) -> str:
+    """Only turn known filesystem path rejections into tool results; other bugs still fail the stage."""
+    message = str(exc)
+    if (message.startswith("Path traversal not allowed") or message.startswith("Path escapes ")
+            or message.startswith("Path is outside ")
+            or (message.startswith("Path:") and " outside root directory:" in message)):
+        return message
+    raise exc
+
+
+class SafeFilesystemBackend(FilesystemBackend):
+    """Keep the vendor's path resolution intact, but report its sandbox refusals to the model."""
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        try:
+            return super().read(file_path, offset, limit)
+        except ValueError as exc:
+            return ReadResult(error=sandbox_refusal(exc))
+
+    def ls(self, path: str) -> LsResult:
+        try:
+            return super().ls(path)
+        except ValueError as exc:
+            return LsResult(error=sandbox_refusal(exc))
+
+    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+        try:
+            return super().glob(pattern, path)
+        except ValueError as exc:
+            return GlobResult(error=sandbox_refusal(exc))
+
+    def grep(self, pattern: str, path: str | None = None, glob: str | None = None, *, max_count: int | None = None,
+             **options) -> GrepResult:
+        try:
+            return super().grep(pattern, path, glob, max_count=max_count, **options)
+        except ValueError as exc:
+            return GrepResult(error=sandbox_refusal(exc))
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        try:
+            return super().write(file_path, content)
+        except ValueError as exc:
+            return WriteResult(error=sandbox_refusal(exc))
+
+    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:  # noqa: FBT001, FBT002
+        try:
+            return super().edit(file_path, old_string, new_string, replace_all)
+        except ValueError as exc:
+            return EditResult(error=sandbox_refusal(exc))
+
+    def delete(self, file_path: str) -> DeleteResult:
+        try:
+            return super().delete(file_path)
+        except ValueError as exc:
+            return DeleteResult(error=sandbox_refusal(exc))
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        # Each file is independent, so a bad path cannot abort downloads of the others.
+        results = []
+        for path in paths:
+            try:
+                results.extend(super().download_files([path]))
+            except ValueError as exc:
+                results.append(FileDownloadResponse(path=path, error=sandbox_refusal(exc)))
+        return results
+
+
+class ReadOnlyBackend(SafeFilesystemBackend):
     def write(self, file_path: str, content: str) -> WriteResult:
         return WriteResult(error=f"{file_path} is read-only")
 
@@ -45,7 +112,27 @@ class ReadOnlyBackend(FilesystemBackend):
         return [FileUploadResponse(path=path, error="permission_denied") for path, _ in files]
 
 
-class RepoBackend(FilesystemBackend):
+class UnmountedBackend(ReadOnlyBackend):
+    """The composite fallback is not a fourth mount into the context directory."""
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        return ReadResult(error=f"{file_path} is outside the permitted mounts")
+
+    def ls(self, path: str) -> LsResult:
+        return LsResult(error=f"{path} is outside the permitted mounts")
+
+    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
+        return GlobResult(error=f"{path or pattern} is outside the permitted mounts")
+
+    def grep(self, pattern: str, path: str | None = None, glob: str | None = None, *, max_count: int | None = None,
+             **options) -> GrepResult:
+        return GrepResult(error=f"{path or glob or pattern} is outside the permitted mounts")
+
+    def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
+        return [FileDownloadResponse(path=path, error="permission_denied") for path in paths]
+
+
+class RepoBackend(SafeFilesystemBackend):
     def __init__(self, root: Path, off_limits: list[str], hidden: list[str], *, writable: bool) -> None:
         super().__init__(root_dir=str(root), virtual_mode=True)
         self.off_limits = off_limits
@@ -121,4 +208,4 @@ def mounts(worktree: Path | None, context: Path, skills: Path, off_limits: list[
               "/skills/": ReadOnlyBackend(root_dir=str(skills), virtual_mode=True)}
     if worktree is not None:
         routes["/repo/"] = RepoBackend(worktree, off_limits, hidden, writable=repo_writable)
-    return CompositeBackend(default=ReadOnlyBackend(root_dir=str(context), virtual_mode=True), routes=routes)
+    return CompositeBackend(default=UnmountedBackend(root_dir=str(context), virtual_mode=True), routes=routes)

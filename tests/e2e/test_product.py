@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def harness(*args: str, timeout: int) -> dict:
     process = run_bounded([sys.executable, "-m", "cardinal_harness", *args], timeout, cwd=ROOT)
     assert process.returncode >= 0, f"harness {args} was killed after {timeout}s: {process.stderr[-3000:]}"
+    assert process.stdout.strip(), f"harness {args} produced no report: {process.stderr[-3000:]}"
     summary = json.loads(process.stdout.strip().splitlines()[-1])
     artifact = Path(summary["artifact"])
     report = json.loads((artifact / "report.json").read_text())
@@ -38,6 +39,11 @@ def test_two_dependent_tickets_wait_for_ci_merge_deploy_and_pass_acceptance():
     a deploy whose health turns ready only on the second poll, then the hidden acceptance tests."""
     report = harness("offline", "--scenario", "single", timeout=900)
     assert len(report["checks"]) == 10
+
+
+def test_coder_recovers_from_file_tool_refusals_and_completes_cli_issue():
+    report = harness("offline", "--scenario", "file-tool-refusal", timeout=900)
+    assert len(report["checks"]) == 17
 
 
 def test_daemon_orders_claims_pauses_for_people_and_labels_failures():
