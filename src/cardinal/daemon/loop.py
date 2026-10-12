@@ -1,5 +1,4 @@
-"""Poll one repository for ready issues and run them in issue-number order: one at a time in this
-process, or up to max_parallel_runs at once as worker processes (daemon/workers.py)."""
+"""Poll configured repositories, draining each with its own labels, claims and worker limit."""
 
 import logging
 import sqlite3
@@ -65,11 +64,13 @@ def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, verbos
             results.append({"issue": number, "status": "skipped", "reason": str(exc)})
 
 
-def serve(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, interval: int, verbose: int = 0) -> None:
+def serve(home: Home, config: Config, repos: list[Repo], db: sqlite3.Connection, interval: int, verbose: int = 0) -> None:
     while True:
-        try:
-            for result in drain(home, config, repo, db, verbose):
-                log.info("issue #%s settled %s", result["issue"], result["status"])
-        except Exception:  # noqa: BLE001 - one failed poll (GitHub down, store locked) must not end the daemon
-            log.exception("daemon poll failed; retrying in %ss", interval, extra={"event": "daemon_poll_failed"})
+        for repo in repos:
+            try:
+                for result in drain(home, config, repo, db, verbose):
+                    log.info("%s issue #%s settled %s", repo.slug, result["issue"], result["status"])
+            except Exception:  # noqa: BLE001 - a failed repository poll must not block the others
+                log.exception("daemon poll failed for %s; retrying in %ss", repo.slug, interval,
+                              extra={"event": "daemon_poll_failed", "data": {"repo": repo.slug}})
         time.sleep(interval)

@@ -42,7 +42,7 @@ def parser() -> argparse.ArgumentParser:
     answer.add_argument("--reject", action="store_true")
     resume.add_argument("--note", default="")
 
-    daemon = sub.add_parser("daemon", help="Work ready issues for one repository")
+    daemon = sub.add_parser("daemon", help="Work ready issues in every configured repository (or one with --repo)")
     daemon.add_argument("--repo")
     daemon.add_argument("--once", action="store_true", help="Drain the ready queue, then exit")
     daemon.add_argument("--interval", type=int, default=60)

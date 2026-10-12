@@ -47,6 +47,16 @@ def test_daemon_orders_claims_pauses_for_people_and_labels_failures():
     assert len(report["checks"]) == 17
 
 
+def test_unpinned_daemon_drains_two_repositories_and_pinned_daemon_isolates_one():
+    report = harness("offline", "--scenario", "multi-daemon", timeout=1200)
+    assert len(report["checks"]) == 6
+
+
+def test_repos_check_reports_every_repository_and_fails_on_any_probe():
+    report = harness("offline", "--scenario", "repos-check", timeout=120)
+    assert len(report["checks"]) == 3
+
+
 def test_failed_ci_leaves_pr_open_and_main_untouched():
     """Two required checks, one fails: the failure names only that one."""
     harness("offline", "--scenario", "ci-failure", timeout=900)

@@ -4,6 +4,8 @@
           a merge, and a deploy whose health becomes ready only on the second poll.
 `daemon`: four issues through `cardinal daemon --once`: #12 builds on #11's merge, #13 asks a
           person and is then declined via `cardinal resume`, #14 never passes its tests.
+`multi-daemon`: two remotes with the same issue number and distinct labels and worker limits;
+          unpinned and pinned daemon drains, and ambiguous run rejection.
 `base-sync`: other merges land on main while #11 and #12 are worked; conflicts and a clean move are
           merged in, resolved, verified again and merged.
 `post-merge`: checks that fail on merge commits are re-run once; a repeat failure files a follow-up.
@@ -205,6 +207,119 @@ def daemon(temp: Path, artifact: Path) -> dict:
     expect(checks, "#15 closed and labelled done", final["state"] == "CLOSED" and final["labels"] == ["cardinal:done"], final)
     product.keep_store()
     json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
+    return {"checks": checks, "invocations": product.invocations}
+
+
+def repos_check(temp: Path, artifact: Path) -> dict:
+    """Check two remotes through the CLI, including a missing branch in only one."""
+    second = "example/other-ledger"
+    bare, state_path, state = world(temp, ready=[])
+    other_dir = temp / "other"
+    other_dir.mkdir()
+    other_bare, _, other = world(other_dir, ready=[])
+    other["repository"] = second
+    state["other_repos"] = {second: other}
+    json_file(state_path, state)
+    product = configure(temp, bare, state_path, artifact)
+    config = product.home / "cardinal.toml"
+    with config.open("a") as output:
+        output.write(f'\n[[repos]]\nslug = "{second}"\nremote_url = {json.dumps(str(other_bare))}\n'
+                     'base_branch = "main"\ntest_command = ["git", "--version"]\n'
+                     'required_checks = []\npaths_off_limits = []\npaths_hidden = []\n')
+    checks: dict = {}
+    code, passed = product("repos", "check")
+    expect(checks, "unpinned check reports both healthy repositories",
+           code == 0 and isinstance(passed, list) and [item.get("repo") for item in passed] == [SLUG, second]
+           and all(item.get("ok") and item.get("checks") and
+                   all(value.startswith("ok") for value in item["checks"].values()) for item in passed), passed)
+
+    # Break only the second remote's base-branch probe; the first still passes.
+    text = config.read_text()
+    before, separator, after = text.rpartition('base_branch = "main"')
+    assert separator
+    config.write_text(before + 'base_branch = "missing"' + after)
+    code, partial = product("repos", "check")
+    expect(checks, "one failed probe cannot mask the other repository or its successful checks",
+           code == 1 and isinstance(partial, list) and len(partial) == 2
+           and [item.get("repo") for item in partial] == [SLUG, second]
+           and partial[0].get("ok") is True and partial[1].get("ok") is False
+           and partial[1].get("checks", {}).get("base branch", "").startswith("FAILED")
+           and partial[1]["checks"].get("repository", "").startswith("ok")
+           and partial[1]["checks"].get("test command", "").startswith("ok"), partial)
+
+    calls_before = len(json.loads(state_path.read_text())["calls"])
+    code, pinned = product("repos", "check", "--repo", SLUG)
+    new_calls = json.loads(state_path.read_text())["calls"][calls_before:]
+    expect(checks, "pinned check probes only the selected repository",
+           code == 0 and isinstance(pinned, dict) and pinned.get("repo") == SLUG and pinned.get("ok") is True
+           and all(second not in call for call in new_calls), {"result": pinned, "calls": new_calls})
+    product.keep_store()
+    json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
+    return {"checks": checks, "invocations": product.invocations}
+
+
+def multi_daemon(temp: Path, artifact: Path) -> dict:
+    """Two independent remotes share issue #19, but not labels, clones, claims or worker limits."""
+    second = "example/other-ledger"
+    bare, state_path, state = world(temp, ready=[19], ci=["success"])
+    other_dir = temp / "other"
+    other_dir.mkdir()
+    other_bare, _, other = world(other_dir, ready=[19], ci=["success"])
+    other["repository"] = second
+    other["issues"]["19"]["labels"] = ["other:ready"]
+    other["labels"] += ["other:ready", "other:working"]
+    state["other_repos"] = {second: other}
+    json_file(state_path, state)
+    product = configure(temp, bare, state_path, artifact, required_checks=[], max_parallel_runs=1)
+    with (product.home / "cardinal.toml").open("a") as config:
+        config.write(f'\n[[repos]]\nslug = "{second}"\nremote_url = {json.dumps(str(other_bare))}\n'
+                     f'base_branch = "main"\ntest_command = {json.dumps([sys.executable, "-m", "pytest", "-q", "tests"])}\n'
+                     'required_checks = []\npaths_off_limits = [".github/"]\npaths_hidden = []\n'
+                     'max_parallel_runs = 2\n\n[repos.labels]\nready = "other:ready"\nworking = "other:working"\n')
+    checks: dict = {}
+    code, ambiguous = product("run", "19")
+    error_log = Path(product.invocations[-1]["log"]).read_text()
+    expect(checks, "run rejects ambiguous issue numbers with --repo guidance",
+           code == 2 and ambiguous is None and
+           "Several repositories are configured; pass --repo owner/name" in error_log, error_log[-1000:])
+    code, pinned = product("daemon", "--once", "--repo", SLUG)
+    state = json.loads(state_path.read_text())
+    expect(checks, "pinned daemon completes only the selected repo",
+           code == 0 and isinstance(pinned, list) and len(pinned) == 1 and pinned[0]["status"] == "done"
+           and state["issues"]["19"]["labels"] == ["cardinal:done"]
+           and state["other_repos"][second]["issues"]["19"]["labels"] == ["other:ready"], pinned)
+    code, unpinned = product("daemon", "--once")
+    state = json.loads(state_path.read_text())
+    other_issue = state["other_repos"][second]["issues"]["19"]
+    expect(checks, "unpinned daemon completes the other repo with its own ready label and worker limit",
+           code == 0 and isinstance(unpinned, list) and len(unpinned) == 1 and unpinned[0]["status"] == "done"
+           and other_issue["state"] == "CLOSED" and other_issue["labels"] == ["cardinal:done"], unpinned)
+    runs = product.status(19)
+    expect(checks, "same issue number got a separate run and merge in each repository",
+           {run["repo"] for run in runs} == {SLUG, second} and len(runs) == 2 and len(state["prs"]) == 1
+           and len(state["other_repos"][second]["prs"]) == 1
+           and all(pr["state"] == "MERGED" for pr in state["prs"] + state["other_repos"][second]["prs"]),
+           {"prs": state["prs"], "other_prs": state["other_repos"][second]["prs"]})
+    # Reset both remotes to a fresh ready issue to prove that one unpinned invocation drains both.
+    for slug, scope, label in ((SLUG, state, "cardinal:ready"), (second, state["other_repos"][second], "other:ready")):
+        scope["issues"]["17"]["labels"] = [label]
+    json_file(state_path, state)
+    code, both = product("daemon", "--once")
+    state = json.loads(state_path.read_text())
+    expect(checks, "one unpinned daemon invocation settles both ready issues",
+           code == 0 and isinstance(both, list) and len(both) == 2
+           and all(result["status"] == "done" for result in both)
+           and all(scope["issues"]["17"]["labels"] == ["cardinal:done"] and scope["issues"]["17"]["state"] == "CLOSED"
+                   for scope in (state, state["other_repos"][second])), both)
+    records = [json.loads(line) for path in (product.home / "logs").glob("*.jsonl")
+               for line in path.read_text().splitlines()]
+    worker_issues = [record["data"]["issue"] for record in records if record.get("event") == "worker_started"]
+    locks = product.home / "clones"
+    expect(checks, "only the parallel-configured repo starts workers and each clone has its own intake lock",
+           sorted(worker_issues) == [17, 19] and all((locks / f"{slug.replace('/', '--')}.intake.lock").exists()
+                                                       for slug in (SLUG, second)), worker_issues)
+    product.keep_store()
+    json_file(artifact / "github_state.json", state)
     return {"checks": checks, "invocations": product.invocations}
 
 
@@ -677,7 +792,7 @@ def scout(temp: Path, artifact: Path) -> dict:
     return scenario(temp, artifact)
 
 
-SCENARIOS = {"single": single, "daemon": daemon, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
+SCENARIOS = {"single": single, "daemon": daemon, "multi-daemon": multi_daemon, "repos-check": repos_check, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
              "parallel": parallel, "daemon-restart": daemon_restart, "worker-killed": worker_killed,
              "scout": scout, "documentation": documentation}
