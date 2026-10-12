@@ -67,6 +67,11 @@ def test_checks_failing_after_merge_are_rerun_once_then_filed_without_looping():
     assert len(report["checks"]) == 7
 
 
+def test_documentation_only_merges_without_tests_but_code_and_unmet_requirements_do_not():
+    report = harness("offline", "--scenario", "documentation", timeout=900)
+    assert len(report["checks"]) == 7
+
+
 def test_parallel_workers_plan_one_at_a_time_and_land_sibling_merges():
     """Three workers: #11, #17 and #18 overlap while #12 waits for #11, which it builds on. Planning
     holds the intake lock one run at a time; #17 and #18 edit the same file, so the later merge

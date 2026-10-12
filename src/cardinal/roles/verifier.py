@@ -20,6 +20,10 @@ def is_test_path(path: str) -> bool:
     return bool(TEST_PATH.search(path))
 
 
+def is_documentation_path(path: str) -> bool:
+    return bool(re.search(r"(^|/)docs/", path)) or path.lower().endswith((".md", ".rst", ".adoc", ".asciidoc"))
+
+
 def verify(run: Run, decision: IntakeDecision, base_sha: str, head_evidence: CommandEvidence | None) -> Verdict:
     head_sha = head(run.worktree)
     changed = changed_files(run.worktree, base_sha)
@@ -53,6 +57,7 @@ def verify(run: Run, decision: IntakeDecision, base_sha: str, head_evidence: Com
     ids = {item.id for item in decision.requirements}
     touched = sorted(path for path in changed if under(path, run.repo.paths_off_limits + run.repo.paths_hidden))
     tests_changed = any(is_test_path(path) for path in changed)
+    code_changed = any(not is_test_path(path) and not is_documentation_path(path) for path in changed)
     findings = list(assessment.findings)
     if not assessment.approved and not findings:
         findings.append("The verifier did not approve the change")
@@ -61,9 +66,9 @@ def verify(run: Run, decision: IntakeDecision, base_sha: str, head_evidence: Com
     if set(assessment.requirements) != ids or not all(assessment.requirements.values()):
         missing = sorted(ids - {key for key, value in assessment.requirements.items() if value})
         findings.append(f"Requirements not shown to be delivered: {missing}")
-    if not assessment.tests_are_e2e:
+    if code_changed and not assessment.tests_are_e2e:
         findings.append("The repository tests added for this change do not exercise the application boundary")
-    if not tests_changed:
+    if code_changed and not tests_changed:
         findings.append("No repository test changed with the code")
     if touched:
         findings.append(f"Off-limits paths changed: {touched}")

@@ -33,8 +33,9 @@ def attempt(run: Run, decision: IntakeDecision, ticket: Ticket, number: int, fee
         worktree=run.worktree, repo_writable=True, off_limits=run.repo.paths_off_limits,
         hidden=run.repo.paths_hidden,
         prompt=(f"Use the coder skill to implement ticket {ticket.id} in /repo/. Read /context/ticket.json, "
-                "/context/issue.json and /context/requirements.json. Add tests to the repository that exercise "
-                "the new behavior through the application's boundary, then call run_repo_tests and fix failures "
+                "/context/issue.json and /context/requirements.json. For code changes, add tests that exercise "
+                "the new behavior through the application's boundary. Documentation-only tickets need no tests; "
+                "do not add tests that merely assert document strings. Call run_repo_tests and fix failures "
                 "before you finish." + retry_note),
         tools=[run_repo_tests_tool],
     )

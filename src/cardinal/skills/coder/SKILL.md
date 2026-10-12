@@ -11,9 +11,10 @@ Input: `/context/ticket.json`, `/context/issue.json`, `/context/requirements.jso
 1. Read the ticket's `target_files`, then follow imports, callers and existing tests. The
    targets are a starting point, not a limit.
 2. Implement the ticket. Preserve behavior outside it and match the repository's style.
-3. Add or extend the repository's own tests so they exercise the new behavior through the
-   application's boundary (HTTP requests, CLI invocations, or a browser), following how the
-   existing tests start the application.
+3. For code changes, add or extend the repository's own tests so they exercise the new behavior
+   through the application's boundary (HTTP requests, CLI invocations, or a browser), following
+   how the existing tests start the application. Documentation-only tickets need no tests: do not
+   add tests that merely assert document strings.
 4. Call `run_repo_tests`. Fix every failure you caused and run it again. Finish only when it
    passes, or explain precisely what still fails.
 
