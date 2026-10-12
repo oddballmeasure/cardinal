@@ -46,6 +46,11 @@ ISSUES = {
     16: ("Summarise spending by merchant", "- R1: --by-merchant prints each merchant's total."),
     17: ("Note the merchant filter in the README", "- R1: The README mentions --merchant."),
     18: ("Note the input flag in the README", "- R1: The README mentions --input."),
+    19: ("Note usage in the README", "- R1: README documents `python -m ledger --help` for usage information."),
+    20: ("Change ledger query implementation", "- R1: The query module describes transaction filtering."),
+    21: ("Note the absent flag in the README", "- R1: The README mentions the absent flag."),
+    22: ("Change ledger TypeScript client", "- R1: The TypeScript client describes transaction filtering."),
+    23: ("Change ledger requirements", "- R1: The requirements file describes transaction filtering."),
 }
 ACCEPTANCE = {104: ["test_since_is_inclusive", "test_invalid_since_is_rejected", "test_csv_preserves_quoting_and_unicode",
                     "test_empty_csv_keeps_header", "test_since_and_csv_combine"]}
@@ -540,6 +545,68 @@ def cleaner(temp: Path, artifact: Path) -> dict:
     return {"checks": checks}
 
 
+def documentation(temp: Path, artifact: Path) -> dict:
+    """Real CLI runs: README-only merges without tests, but missing documentation and code tests block."""
+    bare, state_path, _ = world(temp, ready=[19, 20, 21, 22, 23])
+    product = configure(temp, bare, state_path, artifact, limits={"verify_rounds": 1})
+    checks: dict = {}
+    base = git(bare, "rev-parse", "refs/heads/main")
+    code, result = product("run", "19")
+    state = json.loads(state_path.read_text())
+    run = product.status(19)[-1]
+    verdicts = [event["data"] for event in run["events"] if event["kind"] == "verdict"]
+    issue = state["issues"]["19"]
+    expect(checks, "README-only issue completes through the CLI and closes as done",
+           code == 0 and result.get("status") == "done" and run["status"] == "done"
+           and issue["state"] == "CLOSED" and issue["labels"] == ["cardinal:done"],
+           {"result": result, "issue": issue})
+    main = git(bare, "rev-parse", "refs/heads/main")
+    merged = [pr for pr in state["prs"] if pr["state"] == "MERGED"]
+    expect(checks, "README PR merged the verified head onto main",
+           len(state["prs"]) == 1 and len(merged) == 1 and main != base
+           and run["merge_sha"] == main and merged[0]["headRefOid"] == run["head_sha"],
+           {"main": main, "base": base, "prs": state["prs"], "run": run})
+    readme = git(bare, "show", f"{main}:README.md")
+    expected_line = "Use `python -m ledger --help` to view usage information."
+    expect(checks, "merged README delivers the requested usage documentation",
+           expected_line in readme.splitlines(), readme)
+    diff = git(bare, "diff", "--name-only", base, main).splitlines()
+    expect(checks, "merged documentation diff changes only README.md, not tests", diff == ["README.md"], diff)
+    expect(checks, "verifier accepted the README requirement without claiming boundary tests",
+           len(verdicts) == 1 and verdicts[0]["head_sha"] == run["head_sha"]
+           and verdicts[0]["approved"] and verdicts[0]["requirements"] == {"R1": True}
+           and not verdicts[0]["tests_are_e2e"] and not verdicts[0]["test_files_changed"]
+           and verdicts[0]["repo_tests_passed"] and not verdicts[0]["findings"], verdicts)
+
+    for number, path in ((20, "ledger/query.py"), (22, "ledger/client.ts"), (23, "requirements.txt")):
+        code, result = product("run", str(number))
+        run = product.status(number)[-1]
+        verdicts = [event["data"] for event in run["events"] if event["kind"] == "verdict"]
+        findings = verdicts[-1]["findings"] if verdicts else []
+        revision = json.loads((product.home / "runs" / run["run_id"] / "context" / "revision.json").read_text())
+        expect(checks, f"{path} without boundary tests gets both test findings",
+               code == 1 and (result.get("failure") or {}).get("kind") == "verification"
+               and revision["changed_files"] == [path]
+               and "The repository tests added for this change do not exercise the application boundary" in findings
+               and "No repository test changed with the code" in findings,
+               {"result": result, "revision": revision, "findings": findings})
+
+    code, result = product("run", "21")
+    run = product.status(21)[-1]
+    verdicts = [event["data"] for event in run["events"] if event["kind"] == "verdict"]
+    findings = verdicts[-1]["findings"] if verdicts else []
+    expect(checks, "unmet README requirement blocks approval without test findings",
+           code == 1 and (result.get("failure") or {}).get("kind") == "verification"
+           and any("Requirements not shown to be delivered" in finding for finding in findings)
+           and not any("repository test" in finding.lower() for finding in findings),
+           {"result": result, "findings": findings})
+    expect(checks, "rejected branches did not advance main",
+           git(bare, "rev-parse", "refs/heads/main") == product.status(19)[-1]["merge_sha"])
+    product.keep_store()
+    json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
+    return {"checks": checks, "invocations": product.invocations}
+
+
 def monitor(temp: Path, artifact: Path) -> dict:
     from cardinal_harness.monitor_scenario import scenario  # imports offline; kept local to avoid a cycle
     return scenario(temp, artifact)
@@ -552,7 +619,7 @@ def scout(temp: Path, artifact: Path) -> dict:
 
 SCENARIOS = {"single": single, "daemon": daemon, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
-             "parallel": parallel, "worker-killed": worker_killed, "scout": scout}
+             "parallel": parallel, "worker-killed": worker_killed, "scout": scout, "documentation": documentation}
 
 
 def run(scenario: str, artifact: Path) -> dict:

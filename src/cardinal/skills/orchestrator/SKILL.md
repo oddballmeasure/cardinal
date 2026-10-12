@@ -29,7 +29,8 @@ A human answer resolves the question you asked; plan with it rather than asking 
 3. Write 1-4 tickets. One focused ticket is often right; split only when independent or
    ordered work helps a coder. Every requirement is covered by exactly one ticket. Declare
    `depends_on` when one ticket builds on another. `target_files` must be profiled paths.
-4. Each ticket must stand alone: the task, observable acceptance criteria, and the tests to add
-   at the application's boundary (HTTP, CLI, or browser), as the issue asks.
+4. Each ticket must stand alone: the task and observable acceptance criteria. For code changes,
+   specify tests at the application's boundary (HTTP, CLI, or browser). Documentation-only tickets
+   need no tests; do not request tests that merely assert document strings.
 
 Do not edit files. Keep tickets within the issue's request.

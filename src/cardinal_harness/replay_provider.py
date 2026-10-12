@@ -198,11 +198,17 @@ def decision_for(context: dict) -> IntakeDecision:
             task="Make the failing check pass at its cause.", acceptance_criteria=["The check passes"], covers=["R1"],
             depends_on=[], target_files=["tests/test_cli.py"])], **{**common, "requirements": [
                 Requirement(id="R1", text="The check that failed after the merge passes on main")]})
-    if title.startswith("Note "):  # parallel scenario: each appends one line to the README
+    if title.startswith("Change ledger "):
+        path = {20: "ledger/query.py", 22: "ledger/client.ts", 23: "requirements.txt"}[number]
+        return IntakeDecision(kind="chore", reason="One non-documentation change", tickets=[Ticket(
+            id=f"CODE-{number}", source_issue=number, title=title, task=f"Describe filtering in {path}.",
+            acceptance_criteria=["The file describes transaction filtering"], covers=["R1"],
+            depends_on=[], target_files=[path])], **common)
+    if title.startswith("Note "):  # README-only documentation tickets
         return IntakeDecision(kind="chore", reason="One README line", tickets=[Ticket(
             id=f"NOTE-{number}", source_issue=number, title=title, task="Append the line to README.md.",
             acceptance_criteria=["README.md ends with the line"], covers=["R1"], depends_on=[],
-            target_files=["README.md"])], **{**common, "requirements": [Requirement(id="R1", text=title)]})
+            target_files=["README.md"])], **common)
     if title.startswith("Add a total flag"):
         return IntakeDecision(kind="feature", reason="One CLI flag", tickets=[Ticket(
             id="TOTAL", source_issue=number, title="Print a total", task="Add --total printing the amount sum.",
@@ -293,11 +299,14 @@ def coder(context: dict, title: str):
         writes = resolve_conflicts(context)
     elif ticket_id.startswith("NOTE-"):
         readme = Path(context["worktree"]) / "README.md"
-        number = context["issue"]["number"]
-        writes = {"README.md": readme.read_text() + f"{title}.\n", f"tests/test_note_{number}.py": (
-            "from pathlib import Path\n\n\n"
-            f"def test_readme_notes_issue_{number}() -> None:\n"
-            f"    assert {title + '.'!r} in Path('README.md').read_text().splitlines()\n")}
+        line = ("Use `python -m ledger --help` to view usage information."
+                if context["issue"]["number"] == 19 else
+                "Unrelated documentation update." if context["issue"]["number"] == 21 else title + ".")
+        writes = {"README.md": readme.read_text() + line + "\n"}
+    elif ticket_id.startswith("CODE-"):
+        path = context["ticket"]["target_files"][0]
+        source = Path(context["worktree"]) / path
+        writes = {path: source.read_text() + "\n# Transaction filtering is described here.\n"}
     else:
         writes = writes_for(ticket_id)
     return Scripted(messages=iter([
@@ -313,9 +322,15 @@ def coder(context: dict, title: str):
 # --- verifier -----------------------------------------------------------------------------------
 
 def verifier(context: dict, title: str):
-    assessment = VerifierAssessment(head_sha=context["head_sha"], approved=True,
-                                    requirements={item: True for item in context["requirement_ids"]},
-                                    tests_are_e2e=True, findings=[])
+    doc_issue = title.startswith("Note ")
+    text = (Path(context["worktree"]) / "README.md").read_text() if doc_issue else ""
+    line = ("Use `python -m ledger --help` to view usage information."
+            if context["issue"]["number"] == 19 else title + ".")
+    delivered = line in text if doc_issue else True
+    assessment = VerifierAssessment(head_sha=context["head_sha"], approved=delivered,
+                                    requirements={item: delivered for item in context["requirement_ids"]},
+                                    tests_are_e2e=not (doc_issue or title.startswith("Change ledger ")),
+                                    findings=[] if delivered else ["The requested README line is missing"])
     return Scripted(messages=iter([
         call("read_file", {"file_path": "/skills/verifier/SKILL.md"}, "skill"),
         call("read_file", {"file_path": "/context/revision.json"}, "revision"),
