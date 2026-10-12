@@ -832,6 +832,192 @@ def file_tool_refusal(temp: Path, artifact: Path) -> dict:
     return {"checks": checks, "invocations": product.invocations}
 
 
+def setup_recovery(temp: Path, artifact: Path) -> dict:
+    """A partly applied working-label edit, then a setup failure, through real daemon CLI polls."""
+    checks: dict = {}
+    for name, responses in (
+        ("transient", [{"error": "GraphQL: Something went wrong while executing your query",
+                        "after": True, "partial": True}]),
+        ("permanent", [{"error": "HTTP 404: Not Found", "after": True, "partial": True}]),
+    ):
+        root = temp / name
+        root.mkdir()
+        bare, state_path, state = world(root, ready=[19], ci=["success"])
+        state["gh_failures"] = [{"command": ["issue", "edit"], "responses": responses}]
+        json_file(state_path, state)
+        product = configure(root, bare, state_path, artifact / name, required_checks=[])
+        code, result = product("daemon", "--once")
+        state = json.loads(state_path.read_text())
+        rows = product.status(19)
+        edits = [call for call in state["calls"] if call[:3] == ["issue", "edit", "19"]]
+        observed = [entry["labels"] for entry in state.get("edit_labels", []) if entry["issue"] == "19"]
+        expect(checks, f"{name}: first edit really left two labels",
+               bool(observed) and set(observed[0]) == {"cardinal:ready", "cardinal:in-progress"}, observed)
+        if name == "transient":
+            expect(checks, "transient: daemon finishes done after retry, without overlapping runs",
+                   code == 0 and [item.get("status") for item in result] == ["done"]
+                   and len(rows) == 1 and rows[0]["status"] == "done" and rows[0]["ended_at"]
+                   and state["issues"]["19"]["labels"] == ["cardinal:done"] and len(edits) == 3,
+                   {"result": result, "rows": rows, "edits": edits, "labels": observed})
+        else:
+            expect(checks, "permanent: failed setup is settled and restores ready without retrying 404",
+                   code != 0 and len(rows) == 1 and rows[0]["status"] == "failed"
+                   and rows[0]["failure_kind"] == "setup" and rows[0]["ended_at"]
+                   and state["issues"]["19"]["labels"] == ["cardinal:ready"] and len(edits) == 2,
+                   {"result": result, "rows": rows, "edits": edits, "labels": observed})
+            code, result = product("daemon", "--once")
+            state = json.loads(state_path.read_text())
+            rows = product.status(19)
+            expect(checks, "permanent: released claim permits a fresh run, with no unsettled rows",
+                   code == 0 and [item.get("status") for item in result] == ["done"]
+                   and [row["status"] for row in rows] == ["failed", "done"]
+                   and all(row["ended_at"] for row in rows)
+                   and state["issues"]["19"]["labels"] == ["cardinal:done"],
+                   {"result": result, "rows": rows, "issue": state["issues"]["19"]})
+        product.keep_store()
+        json_file(artifact / name / "github_state.json", state)
+    return {"checks": checks}
+
+
+def gh_retries(temp: Path, artifact: Path) -> dict:
+    """Script gh at the executable boundary; check CLI results and the vendor's call log."""
+    bare, state_path, state = world(temp, ready=[19], ci=["success"])
+    state["gh_failures"] = [{"command": ["issue", "edit"], "responses": [
+        {"error": "GraphQL: Something went wrong while executing your query", "after": True}]}]
+    json_file(state_path, state)
+    product = configure(temp, bare, state_path, artifact, required_checks=[])
+    checks: dict = {}
+    started = time.monotonic()
+    code, result = product("run", "19")
+    elapsed = time.monotonic() - started
+    state = json.loads(state_path.read_text())
+    edits = [call for call in state["calls"] if call[:2] == ["issue", "edit"] and call[2] == "19"]
+    expect(checks, "ambiguous label edit recovers without duplicating a run",
+           code == 0 and result.get("status") == "done" and len(product.status(19)) == 1
+           and state["issues"]["19"]["labels"] == ["cardinal:done"] and len(edits) == 3,
+           {"result": result, "edits": edits, "issue": state["issues"]["19"]})
+    expect(checks, "transient retry is paced", elapsed >= 0.25, elapsed)
+
+    # Auth is a read-only CLI probe; each case runs in a new process with the same scripted gh.
+    for name, error in (("not found", "HTTP 404: Not Found"), ("permission", "HTTP 403: permission denied"),
+                        ("validation", "GraphQL: Validation failed: bad input")):
+        state = json.loads(state_path.read_text())
+        before = len(state["calls"])
+        state["gh_failures"] = [{"command": ["auth", "status"], "responses": [{"error": error}]}]
+        json_file(state_path, state)
+        code, result = product("repos", "check", "--repo", SLUG)
+        state = json.loads(state_path.read_text())
+        calls = state["calls"][before:]
+        expect(checks, f"{name} is not retried", code == 1 and result["checks"]["gh auth"].startswith("FAILED")
+               and error in result["checks"]["gh auth"]
+               and sum(call[:2] == ["auth", "status"] for call in calls) == 1, {"result": result, "calls": calls})
+
+    for name, error in (("gateway", "HTTP 503: Service Unavailable"),
+                        ("graphql", "GraphQL: Something went wrong while executing your query")):
+        state = json.loads(state_path.read_text())
+        before = len(state["calls"])
+        state["gh_failures"] = [{"command": ["auth", "status"], "responses": [{"error": error}] * 3}]
+        json_file(state_path, state)
+        started = time.monotonic()
+        code, result = product("repos", "check", "--repo", SLUG)
+        elapsed = time.monotonic() - started
+        calls = json.loads(state_path.read_text())["calls"][before:]
+        expect(checks, f"{name} exhausts bounded retries with a useful error",
+               code == 1 and "after 3 attempts" in result["checks"]["gh auth"]
+               and error in result["checks"]["gh auth"] and elapsed >= 0.75
+               and sum(call[:2] == ["auth", "status"] for call in calls) == 3,
+               {"result": result, "calls": calls, "elapsed": elapsed})
+    product.keep_store()
+    json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
+    return {"checks": checks, "invocations": product.invocations}
+
+
+def push_retries(temp: Path, artifact: Path) -> dict:
+    """Drive publish through the real CLI and bare remote, faulting only the git executable's push response."""
+    checks: dict = {}
+    real_git = shutil.which("git")
+    assert real_git
+    for name, error, apply, expected_pushes in (
+        ("remote failure", "remote: fatal error in commit_refs\n ! [remote rejected] HEAD -> cardinal/test (failure)", False, 2),
+        ("ambiguous success", "error: connection reset by peer", True, 1),
+        ("http", "fatal: HTTP 503 Service Unavailable", False, 2),
+        ("reset", "fatal: connection reset by peer", False, 2),
+        ("non-fast-forward", "! [rejected] HEAD -> cardinal/test (non-fast-forward)", False, 1),
+        ("protected", "! [remote rejected] HEAD -> cardinal/test (protected branch hook declined)", False, 1),
+        ("permission", "remote: permission denied\n ! [remote rejected] HEAD -> cardinal/test (failure)", False, 1),
+        ("remote moved", "remote: fatal error in commit_refs", False, 1),
+        ("exhausted", "remote: fatal error in commit_refs", False, 3),
+    ):
+        root = temp / name.replace(" ", "-")
+        root.mkdir()
+        bare, state_path, _ = world(root, ready=[19], ci=["success"])
+        bin_dir = root / "git-bin"
+        bin_dir.mkdir()
+        log = root / "pushes.jsonl"
+        shim = bin_dir / "git"
+        shim.write_text('''#!/usr/bin/env python3
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+if "push" in args and any(arg.startswith("HEAD:refs/heads/cardinal/") for arg in args):
+    path = Path(os.environ["CARDINAL_PUSH_LOG"])
+    attempts = len(path.read_text().splitlines()) if path.exists() else 0
+    with path.open("a") as output:
+        output.write(json.dumps(args) + "\\n")
+    if attempts < int(os.environ["CARDINAL_PUSH_FAILURES"]):
+        if os.environ["CARDINAL_PUSH_APPLY"] == "1":
+            result = subprocess.call([os.environ["CARDINAL_REAL_GIT"], *args])
+            if result:
+                sys.exit(result)
+        if os.environ["CARDINAL_PUSH_MOVE"] == "1":
+            branch = next(arg.split(":", 1)[1] for arg in args if arg.startswith("HEAD:refs/heads/cardinal/"))
+            subprocess.run([os.environ["CARDINAL_REAL_GIT"], "--git-dir", os.environ["CARDINAL_PUSH_REMOTE"],
+                            "update-ref", branch, os.environ["CARDINAL_PUSH_BASE"]], check=True)
+        print(os.environ["CARDINAL_PUSH_ERROR"], file=sys.stderr)
+        sys.exit(1)
+sys.exit(subprocess.call([os.environ["CARDINAL_REAL_GIT"], *args]))
+''')
+        shim.chmod(0o755)
+        product = configure(root, bare, state_path, artifact / name.replace(" ", "-"), required_checks=[],
+                            env={"PATH": f"{bin_dir}{os.pathsep}{root / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                                 "CARDINAL_REAL_GIT": real_git, "CARDINAL_PUSH_LOG": str(log),
+                                 "CARDINAL_PUSH_ERROR": error, "CARDINAL_PUSH_APPLY": "1" if apply else "0",
+                                 "CARDINAL_PUSH_MOVE": "1" if name == "remote moved" else "0",
+                                 "CARDINAL_PUSH_REMOTE": str(bare),
+                                 "CARDINAL_PUSH_BASE": git(bare, "rev-parse", "refs/heads/main"),
+                                 "CARDINAL_PUSH_FAILURES": "3" if name == "exhausted" else "1"})
+        started = time.monotonic()
+        code, result = product("run", "19")
+        elapsed = time.monotonic() - started
+        pushes = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+        state = json.loads(state_path.read_text())
+        run = product.status(19)[-1]
+        issue = state["issues"]["19"]
+        if name in ("remote failure", "ambiguous success", "http", "reset"):
+            merged = [pr for pr in state["prs"] if pr["state"] == "MERGED"]
+            expect(checks, f"{name}: verified head pushed and merged after failed response",
+                   code == 0 and result.get("status") == "done" and issue["labels"] == ["cardinal:done"]
+                   and len(merged) == 1 and merged[0]["headRefOid"] == run["head_sha"]
+                   and git(bare, "rev-parse", f"refs/heads/{run['branch']}") == run["head_sha"]
+                   and len(pushes) == expected_pushes, {"result": result, "pushes": pushes, "run": run})
+        else:
+            expect(checks, f"{name}: push fails without unsafe retries",
+                   code == 1 and (result.get("failure") or {}).get("kind") == "git"
+                   and issue["labels"] == ["cardinal:error"] and not state["prs"]
+                   and len(pushes) == expected_pushes
+                   and (name != "remote moved" or
+                        git(bare, "rev-parse", f"refs/heads/{run['branch']}") == git(bare, "rev-parse", "refs/heads/main")),
+                   {"result": result, "pushes": pushes})
+        if name in ("remote failure", "exhausted"):
+            expect(checks, f"{name}: retries are paced and bounded", elapsed >= (0.75 if name == "exhausted" else 0.25),
+                   elapsed)
+        product.keep_store()
+    return {"checks": checks}
+
+
 def monitor(temp: Path, artifact: Path) -> dict:
     from cardinal_harness.monitor_scenario import scenario  # imports offline; kept local to avoid a cycle
     return scenario(temp, artifact)
@@ -845,7 +1031,8 @@ def scout(temp: Path, artifact: Path) -> dict:
 SCENARIOS = {"single": single, "daemon": daemon, "multi-daemon": multi_daemon, "repos-check": repos_check, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
              "parallel": parallel, "daemon-restart": daemon_restart, "worker-killed": worker_killed,
-             "scout": scout, "documentation": documentation, "file-tool-refusal": file_tool_refusal}
+             "scout": scout, "documentation": documentation, "file-tool-refusal": file_tool_refusal,
+             "gh-retries": gh_retries, "push-retries": push_retries, "setup-recovery": setup_recovery}
 
 
 def run(scenario: str, artifact: Path) -> dict:

@@ -58,6 +58,21 @@ def test_unpinned_daemon_drains_two_repositories_and_pinned_daemon_isolates_one(
     assert len(report["checks"]) == 6
 
 
+def test_daemon_recovers_partly_applied_setup_edits_and_settles_failed_setup():
+    report = harness("offline", "--scenario", "setup-recovery", timeout=900)
+    assert len(report["checks"]) == 5
+
+
+def test_gh_transient_failures_retry_but_permanent_failures_do_not():
+    report = harness("offline", "--scenario", "gh-retries", timeout=900)
+    assert len(report["checks"]) == 7
+
+
+def test_verified_branch_push_recovers_from_transient_remote_failure_without_retrying_permanent_rejections():
+    report = harness("offline", "--scenario", "push-retries", timeout=1200)
+    assert len(report["checks"]) == 11
+
+
 def test_repos_check_reports_every_repository_and_fails_on_any_probe():
     report = harness("offline", "--scenario", "repos-check", timeout=120)
     assert len(report["checks"]) == 3

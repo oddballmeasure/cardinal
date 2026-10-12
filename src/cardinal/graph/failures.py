@@ -19,6 +19,7 @@ class FailureKind(StrEnum):
     DEPLOY = "deploy"                        # deployment script failed or never became healthy
     GIT = "git"
     GITHUB = "github"
+    SETUP = "setup"                        # a run was claimed but could not enter its working state
     CRASH = "crash"                          # a defect in Cardinal itself
 
     @property
