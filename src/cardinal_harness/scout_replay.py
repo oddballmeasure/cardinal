@@ -44,7 +44,7 @@ COUNT = proposal("feature", "Print the number of matched transactions with --cou
                  ['`--count` prints "3" for data/transactions.json'], [RUN_MAIN])
 TEST_PATH = "tests/test_cli.py"
 MISCOUNTED = proposal("feature", "Test a second merchant selection example", [
-    Evidence(path=TEST_PATH, line_start=2, line_end=2,
+    Evidence(path=TEST_PATH, line_start=2, line_end=4,
              quote='assert [row["id"] for row in json.loads(result.stdout)] == ["t-002"]')],
     ['`test_merchant_selection` checks a second merchant example'], [TEST_PATH])
 AMBIGUOUS = proposal("feature", "Add explicit CLI test failure details", [
@@ -108,7 +108,7 @@ def model(context: dict):
         evidence = context["proposal"]["evidence"] if verdict == "confirmed" else []
         if title == MISCOUNTED.title:
             # Reviewer independently miscounts too: the final issue must use checked reviewer evidence.
-            evidence = [Evidence(path=TEST_PATH, line_start=1, line_end=1, quote=MISCOUNTED.evidence[0].quote)]
+            evidence = [Evidence(path=TEST_PATH, line_start=1, line_end=3, quote=MISCOUNTED.evidence[0].quote)]
         review = ProposalReview(verdict=verdict, reason=reason, evidence=evidence)
         return Scripted(messages=iter([
             call("read_file", {"file_path": "/skills/scout-reviewer/SKILL.md"}, "skill"),

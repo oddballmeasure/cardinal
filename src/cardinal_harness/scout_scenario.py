@@ -129,11 +129,12 @@ def scenario(temp: Path, artifact: Path) -> dict:
         row = db.execute("SELECT proposal FROM scout_proposals WHERE title = ?",
                          (scout_replay.MISCOUNTED.title,)).fetchone()
     stored = json.loads(row[0])["evidence"][0] if row else {}
-    expect(checks, "a unique quote 25 lines from its citation is filed and its correction recorded",
+    expect(checks, "a unique one-line quote 25 lines from a three-line citation is filed and corrected",
            corrected.get("action") == "filed" and stored.get("line_start") == 27
-           and stored.get("corrected_from") == [2, 2], {"result": corrected, "evidence": stored})
-    expect(checks, "the filed issue cites corrected reviewer evidence rather than the reviewer's miscount",
-           "## Evidence\n`tests/test_cli.py:27` (lines corrected from 1)" in relocated.get("body", "")
+           and stored.get("line_end") == 27 and stored.get("corrected_from") == [2, 4],
+           {"result": corrected, "evidence": stored})
+    expect(checks, "the filed issue cites the quote's actual line, not the reviewer's three-line span",
+           "## Evidence\n`tests/test_cli.py:27` (lines corrected from 1-3)" in relocated.get("body", "")
            and scout_replay.MISCOUNTED.evidence[0].quote in relocated.get("body", ""), relocated)
     ambiguous = second_seen.get(scout_replay.AMBIGUOUS.title, {})
     expect(checks, "two out-of-window matches are dropped without a nearby match",

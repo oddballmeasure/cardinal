@@ -22,25 +22,34 @@ def normalise(text: str) -> str:
 
 
 def locate(lines: list[str], item: Evidence) -> tuple[int, int] | None:
-    """Find a cited or nearby match first; otherwise accept a unique match anywhere in the file."""
+    """Find actual quote occurrences, preferring one close to the citation or unique in the file."""
     quote = normalise(item.quote)
-    span = max(item.line_end - item.line_start, item.quote.strip("\n").count("\n"))
-    starts = sorted(range(max(1, item.line_start - DRIFT), item.line_start + DRIFT + 1),
-                    key=lambda start: abs(start - item.line_start))
-    def matches(start: int) -> bool:
-        end = min(start + span, len(lines))
-        return quote in normalise("\n".join(lines[start - 1:end]))
+    if not quote:
+        return None
+    # Join non-whitespace runs exactly as normalise does, retaining the source line for each
+    # character so a match shorter than the cited span has its own precise range.
+    text, line_numbers = [], []
+    for line_no, line in enumerate(lines, 1):
+        for token in re.finditer(r"\S+", line):
+            if text:
+                text.append(" ")
+                line_numbers.append(line_no)
+            text.append(token.group())
+            line_numbers.extend([line_no] * len(token.group()))
+    source = "".join(text)
+    found = []
+    offset = 0
+    while (offset := source.find(quote, offset)) != -1:
+        found.append((line_numbers[offset], line_numbers[offset + len(quote) - 1]))
+        offset += 1  # count occurrences, not overlapping windows containing the same occurrence
+    def distance(match: tuple[int, int]) -> int:
+        start, end = match
+        return max(item.line_start - end, start - item.line_end, 0)
 
-    for start in starts:
-        if matches(start):
-            return start, min(start + span, len(lines))
-    # Only an unambiguous match outside the drift window can override a bad citation.
-    # Keep the same windows and whitespace comparison as the nearby search.
-    found = [start for start in range(1, len(lines) + 1) if matches(start)]
-    if len(found) == 1:
-        start = found[0]
-        return start, min(start + span, len(lines))
-    return None
+    nearby = [match for match in found if distance(match) <= DRIFT]
+    if nearby:
+        return min(nearby, key=distance)
+    return found[0] if len(found) == 1 else None
 
 
 def evidence_problem(worktree: Path, items: list[Evidence], tracked: set[str], repo: Repo) -> str | None:
