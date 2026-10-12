@@ -9,6 +9,9 @@ State lives in the JSON file named by CARDINAL_FAKE_GH_STATE:
   repository, bare, issues{number: {...}}, labels[], prs[], next_pr,
   ci{"script": ["pending", "success"], "check": "name", "scripts": [[...], ...], "log": "...",
      "also": ["name"], "push": [{"name": ["failure", "success"]}, ...]},
+  gh_failures: [{"command": ["issue", "edit"], "responses": [{"error": "GraphQL: ...", "after": true}]}]
+  scripts CLI failures on matching command prefixes; `after` reports the error after applying the
+  command (useful for testing ambiguous outcomes). Each response is consumed exactly once.
   check_calls{sha: n}. With "scripts", the Nth distinct head checked follows the Nth script (the last
   repeats), so a repaired head can pass where the first failed. "also" names checks that pass on every
   PR head once the scripted one is listed. "log" is every failed job's log.
@@ -266,6 +269,11 @@ def serve(path: Path) -> None:
     scope["_slug"] = slug
     log = state.setdefault("calls", [])
     log.append(sys.argv[1:])
+    failure = next((script["responses"].pop(0) for script in state.get("gh_failures", [])
+                    if script["responses"] and args[:len(script["command"])] == script["command"]), None)
+    if failure and not failure.get("after"):
+        path.write_text(json.dumps(state, indent=2))
+        raise SystemExit(failure["error"])
     if args[:2] == ["auth", "status"]:
         result = "Logged in to github.invalid as fake"
     elif args[:2] == ["repo", "view"]:
@@ -286,6 +294,8 @@ def serve(path: Path) -> None:
         raise SystemExit(f"fake gh: unsupported command {args}")
     scope.pop("_slug")
     path.write_text(json.dumps(state, indent=2))
+    if failure:
+        raise SystemExit(failure["error"])
     if result is not None:
         print(json.dumps(result) if isinstance(result, (dict, list)) else result)
 

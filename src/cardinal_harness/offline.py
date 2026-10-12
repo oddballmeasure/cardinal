@@ -832,6 +832,59 @@ def file_tool_refusal(temp: Path, artifact: Path) -> dict:
     return {"checks": checks, "invocations": product.invocations}
 
 
+def gh_retries(temp: Path, artifact: Path) -> dict:
+    """Script gh at the executable boundary; check CLI results and the vendor's call log."""
+    bare, state_path, state = world(temp, ready=[19], ci=["success"])
+    state["gh_failures"] = [{"command": ["issue", "edit"], "responses": [
+        {"error": "GraphQL: Something went wrong while executing your query", "after": True}]}]
+    json_file(state_path, state)
+    product = configure(temp, bare, state_path, artifact, required_checks=[])
+    checks: dict = {}
+    started = time.monotonic()
+    code, result = product("run", "19")
+    elapsed = time.monotonic() - started
+    state = json.loads(state_path.read_text())
+    edits = [call for call in state["calls"] if call[:2] == ["issue", "edit"] and call[2] == "19"]
+    expect(checks, "ambiguous label edit recovers without duplicating a run",
+           code == 0 and result.get("status") == "done" and len(product.status(19)) == 1
+           and state["issues"]["19"]["labels"] == ["cardinal:done"] and len(edits) == 3,
+           {"result": result, "edits": edits, "issue": state["issues"]["19"]})
+    expect(checks, "transient retry is paced", elapsed >= 0.25, elapsed)
+
+    # Auth is a read-only CLI probe; each case runs in a new process with the same scripted gh.
+    for name, error in (("not found", "HTTP 404: Not Found"), ("permission", "HTTP 403: permission denied"),
+                        ("validation", "GraphQL: Validation failed: bad input")):
+        state = json.loads(state_path.read_text())
+        before = len(state["calls"])
+        state["gh_failures"] = [{"command": ["auth", "status"], "responses": [{"error": error}]}]
+        json_file(state_path, state)
+        code, result = product("repos", "check", "--repo", SLUG)
+        state = json.loads(state_path.read_text())
+        calls = state["calls"][before:]
+        expect(checks, f"{name} is not retried", code == 1 and result["checks"]["gh auth"].startswith("FAILED")
+               and error in result["checks"]["gh auth"]
+               and sum(call[:2] == ["auth", "status"] for call in calls) == 1, {"result": result, "calls": calls})
+
+    for name, error in (("gateway", "HTTP 503: Service Unavailable"),
+                        ("graphql", "GraphQL: Something went wrong while executing your query")):
+        state = json.loads(state_path.read_text())
+        before = len(state["calls"])
+        state["gh_failures"] = [{"command": ["auth", "status"], "responses": [{"error": error}] * 3}]
+        json_file(state_path, state)
+        started = time.monotonic()
+        code, result = product("repos", "check", "--repo", SLUG)
+        elapsed = time.monotonic() - started
+        calls = json.loads(state_path.read_text())["calls"][before:]
+        expect(checks, f"{name} exhausts bounded retries with a useful error",
+               code == 1 and "after 3 attempts" in result["checks"]["gh auth"]
+               and error in result["checks"]["gh auth"] and elapsed >= 0.75
+               and sum(call[:2] == ["auth", "status"] for call in calls) == 3,
+               {"result": result, "calls": calls, "elapsed": elapsed})
+    product.keep_store()
+    json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
+    return {"checks": checks, "invocations": product.invocations}
+
+
 def monitor(temp: Path, artifact: Path) -> dict:
     from cardinal_harness.monitor_scenario import scenario  # imports offline; kept local to avoid a cycle
     return scenario(temp, artifact)
@@ -845,7 +898,8 @@ def scout(temp: Path, artifact: Path) -> dict:
 SCENARIOS = {"single": single, "daemon": daemon, "multi-daemon": multi_daemon, "repos-check": repos_check, "ci-failure": ci_failure, "ci-repair": ci_repair, "deploy": deploy,
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
              "parallel": parallel, "daemon-restart": daemon_restart, "worker-killed": worker_killed,
-             "scout": scout, "documentation": documentation, "file-tool-refusal": file_tool_refusal}
+             "scout": scout, "documentation": documentation, "file-tool-refusal": file_tool_refusal,
+             "gh-retries": gh_retries}
 
 
 def run(scenario: str, artifact: Path) -> dict:

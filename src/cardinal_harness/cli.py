@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="cardinal_harness")
     sub = parser.add_subparsers(dest="command", required=True)
     offline = sub.add_parser("offline")
-    offline.add_argument("--scenario", choices=["single", "daemon", "multi-daemon", "repos-check", "ci-failure", "ci-repair", "deploy", "cleaner", "monitor", "base-sync", "post-merge", "parallel", "daemon-restart", "worker-killed", "scout", "documentation", "file-tool-refusal"], required=True)
+    offline.add_argument("--scenario", choices=["single", "daemon", "multi-daemon", "repos-check", "ci-failure", "ci-repair", "deploy", "cleaner", "monitor", "base-sync", "post-merge", "parallel", "daemon-restart", "worker-killed", "scout", "documentation", "file-tool-refusal", "gh-retries"], required=True)
     live = sub.add_parser("live")
     live.add_argument("--suite", type=Path, default=ROOT / "tests" / "fixtures" / "github_notes_suite.json")
     live.add_argument("--model", required=True)
