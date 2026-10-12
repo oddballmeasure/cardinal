@@ -1,6 +1,6 @@
 """`python -m cardinal_harness`: grade the Cardinal product from outside.
 
-  offline --scenario NAME              single | daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge | parallel | worker-killed | scout
+  offline --scenario NAME              single | daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge | parallel | worker-killed | scout | documentation
   live --suite PATH --model SPEC       the product's daemon against the live GitHub test repository
   propagate --model SPEC              an app error in the live test repo becomes an issue Cardinal fixes
   live-scout --model SPEC [--keep-issues]  one scout pass on a seeded branch of the live test repository

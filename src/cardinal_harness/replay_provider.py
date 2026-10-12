@@ -208,7 +208,7 @@ def decision_for(context: dict) -> IntakeDecision:
         return IntakeDecision(kind="chore", reason="One README line", tickets=[Ticket(
             id=f"NOTE-{number}", source_issue=number, title=title, task="Append the line to README.md.",
             acceptance_criteria=["README.md ends with the line"], covers=["R1"], depends_on=[],
-            target_files=["README.md"])], **{**common, "requirements": [Requirement(id="R1", text=title)]})
+            target_files=["README.md"])], **common)
     if title.startswith("Add a total flag"):
         return IntakeDecision(kind="feature", reason="One CLI flag", tickets=[Ticket(
             id="TOTAL", source_issue=number, title="Print a total", task="Add --total printing the amount sum.",
@@ -299,7 +299,9 @@ def coder(context: dict, title: str):
         writes = resolve_conflicts(context)
     elif ticket_id.startswith("NOTE-"):
         readme = Path(context["worktree"]) / "README.md"
-        line = title + "." if context["issue"]["number"] != 21 else "Unrelated documentation update."
+        line = ("Use `python -m ledger --help` to view usage information."
+                if context["issue"]["number"] == 19 else
+                "Unrelated documentation update." if context["issue"]["number"] == 21 else title + ".")
         writes = {"README.md": readme.read_text() + line + "\n"}
     elif ticket_id.startswith("CODE-"):
         path = context["ticket"]["target_files"][0]
@@ -322,7 +324,9 @@ def coder(context: dict, title: str):
 def verifier(context: dict, title: str):
     doc_issue = title.startswith("Note ")
     text = (Path(context["worktree"]) / "README.md").read_text() if doc_issue else ""
-    delivered = title + "." in text if doc_issue else True
+    line = ("Use `python -m ledger --help` to view usage information."
+            if context["issue"]["number"] == 19 else title + ".")
+    delivered = line in text if doc_issue else True
     assessment = VerifierAssessment(head_sha=context["head_sha"], approved=delivered,
                                     requirements={item: delivered for item in context["requirement_ids"]},
                                     tests_are_e2e=not (doc_issue or title.startswith("Change ledger ")),

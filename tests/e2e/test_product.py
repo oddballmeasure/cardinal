@@ -68,8 +68,10 @@ def test_checks_failing_after_merge_are_rerun_once_then_filed_without_looping():
 
 
 def test_documentation_only_merges_without_tests_but_code_and_unmet_requirements_do_not():
+    """The CLI merges a README-only fix with no test edits or invented boundary coverage;
+    unrelated code edits and a README edit missing its requirement cannot be approved."""
     report = harness("offline", "--scenario", "documentation", timeout=900)
-    assert len(report["checks"]) == 7
+    assert len(report["checks"]) == 10
 
 
 def test_parallel_workers_plan_one_at_a_time_and_land_sibling_merges():
