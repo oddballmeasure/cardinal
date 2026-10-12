@@ -44,17 +44,29 @@ def start(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, number
     if not inputs.claim(db, repo.slug, number, run_id):
         raise ValueError(f"Issue #{number} is already claimed by another run")
     thread_id = f"{repo.slug}#{number}#{run_id}"
+    changing_label = False
     try:
         runs.create(db, run_id, thread_id, repo.slug, number)
+        changing_label = True
         issues.set_state(repo.slug, number, repo.labels, repo.labels.working)
-    except Exception:
-        inputs.release(db, repo.slug, number)  # a claim nobody is driving would block the issue forever
-        raise
-    except (KeyboardInterrupt, SystemExit):
-        # Even an interruption during setup must not strand the claim.
+    except BaseException as exc:
+        # A failed edit may have applied only its add-label half. Keep the claim until the
+        # state axis is reconciled, so another poll cannot start a second run mid-repair.
         try:
-            if daemon:
-                interrupt(repo, db, run_id, number)
+            try:
+                if runs.get(db, run_id)["status"] == "running":
+                    interrupted = daemon and isinstance(exc, (KeyboardInterrupt, SystemExit))
+                    runs.update(db, run_id, status="interrupted" if interrupted else "failed",
+                                failure_kind=None if interrupted else FailureKind.SETUP.value,
+                                failure_detail=None if interrupted else repr(exc)[:2000], ended_at=now())
+            except KeyError:  # insertion failed before there was a row to settle
+                pass
+            if changing_label:
+                try:
+                    issues.set_state(repo.slug, number, repo.labels, repo.labels.ready)
+                except Exception:
+                    log.exception("could not restore ready label after setup failed for #%s", number,
+                                  extra={"event": "setup_label_recovery_failed"})
         finally:
             inputs.release(db, repo.slug, number)
         raise

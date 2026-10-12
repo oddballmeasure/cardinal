@@ -832,6 +832,53 @@ def file_tool_refusal(temp: Path, artifact: Path) -> dict:
     return {"checks": checks, "invocations": product.invocations}
 
 
+def setup_recovery(temp: Path, artifact: Path) -> dict:
+    """A partly applied working-label edit, then a setup failure, through real daemon CLI polls."""
+    checks: dict = {}
+    for name, responses in (
+        ("transient", [{"error": "GraphQL: Something went wrong while executing your query",
+                        "after": True, "partial": True}]),
+        ("permanent", [{"error": "HTTP 404: Not Found", "after": True, "partial": True}]),
+    ):
+        root = temp / name
+        root.mkdir()
+        bare, state_path, state = world(root, ready=[19], ci=["success"])
+        state["gh_failures"] = [{"command": ["issue", "edit"], "responses": responses}]
+        json_file(state_path, state)
+        product = configure(root, bare, state_path, artifact / name, required_checks=[])
+        code, result = product("daemon", "--once")
+        state = json.loads(state_path.read_text())
+        rows = product.status(19)
+        edits = [call for call in state["calls"] if call[:3] == ["issue", "edit", "19"]]
+        observed = [entry["labels"] for entry in state.get("edit_labels", []) if entry["issue"] == "19"]
+        expect(checks, f"{name}: first edit really left two labels",
+               bool(observed) and set(observed[0]) == {"cardinal:ready", "cardinal:in-progress"}, observed)
+        if name == "transient":
+            expect(checks, "transient: daemon finishes done after retry, without overlapping runs",
+                   code == 0 and [item.get("status") for item in result] == ["done"]
+                   and len(rows) == 1 and rows[0]["status"] == "done" and rows[0]["ended_at"]
+                   and state["issues"]["19"]["labels"] == ["cardinal:done"] and len(edits) == 3,
+                   {"result": result, "rows": rows, "edits": edits, "labels": observed})
+        else:
+            expect(checks, "permanent: failed setup is settled and restores ready without retrying 404",
+                   code != 0 and len(rows) == 1 and rows[0]["status"] == "failed"
+                   and rows[0]["failure_kind"] == "setup" and rows[0]["ended_at"]
+                   and state["issues"]["19"]["labels"] == ["cardinal:ready"] and len(edits) == 2,
+                   {"result": result, "rows": rows, "edits": edits, "labels": observed})
+            code, result = product("daemon", "--once")
+            state = json.loads(state_path.read_text())
+            rows = product.status(19)
+            expect(checks, "permanent: released claim permits a fresh run, with no unsettled rows",
+                   code == 0 and [item.get("status") for item in result] == ["done"]
+                   and [row["status"] for row in rows] == ["failed", "done"]
+                   and all(row["ended_at"] for row in rows)
+                   and state["issues"]["19"]["labels"] == ["cardinal:done"],
+                   {"result": result, "rows": rows, "issue": state["issues"]["19"]})
+        product.keep_store()
+        json_file(artifact / name / "github_state.json", state)
+    return {"checks": checks}
+
+
 def gh_retries(temp: Path, artifact: Path) -> dict:
     """Script gh at the executable boundary; check CLI results and the vendor's call log."""
     bare, state_path, state = world(temp, ready=[19], ci=["success"])
@@ -985,7 +1032,7 @@ SCENARIOS = {"single": single, "daemon": daemon, "multi-daemon": multi_daemon, "
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
              "parallel": parallel, "daemon-restart": daemon_restart, "worker-killed": worker_killed,
              "scout": scout, "documentation": documentation, "file-tool-refusal": file_tool_refusal,
-             "gh-retries": gh_retries, "push-retries": push_retries}
+             "gh-retries": gh_retries, "push-retries": push_retries, "setup-recovery": setup_recovery}
 
 
 def run(scenario: str, artifact: Path) -> dict:

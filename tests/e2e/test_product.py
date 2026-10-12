@@ -58,6 +58,11 @@ def test_unpinned_daemon_drains_two_repositories_and_pinned_daemon_isolates_one(
     assert len(report["checks"]) == 6
 
 
+def test_daemon_recovers_partly_applied_setup_edits_and_settles_failed_setup():
+    report = harness("offline", "--scenario", "setup-recovery", timeout=900)
+    assert len(report["checks"]) == 5
+
+
 def test_gh_transient_failures_retry_but_permanent_failures_do_not():
     report = harness("offline", "--scenario", "gh-retries", timeout=900)
     assert len(report["checks"]) == 7
