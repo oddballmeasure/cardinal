@@ -56,6 +56,13 @@ def route(args, home: Home, config, db, sink):
         if args.once:
             return monitor.once(home, config, db)
         monitor.serve(home, config, db, args.interval)
+    if args.command == "daemon":
+        repos = [config.repo(args.repo)] if args.repo else config.repos
+        if args.once:
+            results = [item for repo in repos for item in loop.drain(home, config, repo, db, args.verbose)]
+            failed = any(item["status"] == "failed" for item in results)
+            return print_and(results, 1 if failed else 0)
+        loop.serve(home, config, repos, db, args.interval, args.verbose)
     repo = config.repo(args.repo)
     if args.command == "repos":
         return check(home, config, repo)
@@ -71,12 +78,6 @@ def route(args, home: Home, config, db, sink):
             result = scout.once(home, config, db, repo)
             return print_and(result, 1 if result.get("failure") else 0)
         scout.serve(home, config, db, repo, args.interval)
-    if args.command == "daemon":
-        if args.once:
-            results = loop.drain(home, config, repo, db, args.verbose)
-            failed = any(item["status"] == "failed" for item in results)
-            return print_and(results, 1 if failed else 0)
-        loop.serve(home, config, repo, db, args.interval, args.verbose)
     raise ValueError(f"Unknown command {args.command}")
 
 

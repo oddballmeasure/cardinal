@@ -15,7 +15,8 @@ State lives in the JSON file named by CARDINAL_FAKE_GH_STATE:
   "push" is the base branch's CI on merge commits: the Nth merge follows the Nth entry (the last
   repeats), where each check lists its conclusion per attempt; every attempt is in progress when first
   listed, and `gh run rerun --failed` starts the next attempt of each failed job.
-  other_repos{slug: {issues, labels}}: further repositories that hold only issues and labels
+  other_repos{slug: {issues, labels, bare, prs, ci, ...}}: further repositories; issue-only
+  entries still work when a scenario needs no remote or pull requests
 
 Calls are atomic, as on GitHub: parallel workers' calls are serialised on a lock beside the state.
 
@@ -244,19 +245,25 @@ def main() -> None:
 def serve(path: Path) -> None:
     state = json.loads(path.read_text())
     args = sys.argv[1:]
-    scope = state
+    slug = state["repository"]
     if "-R" in args:
         index = args.index("-R")
         slug = args[index + 1]
-        if slug != state["repository"]:
-            if slug not in state.get("other_repos", {}):
-                raise SystemExit(f"GraphQL: Could not resolve to a Repository with the name '{slug}'.")
-            scope = state["other_repos"][slug]
         args = args[:index] + args[index + 2:]
     elif args[:2] == ["issue", "create"]:
         raise SystemExit("gh issue create needs -R outside a checkout")
-    scope["_slug"] = state["repository"] if scope is state else next(
-        key for key, value in state["other_repos"].items() if value is scope)
+    elif args[0] == "api":
+        # `gh api repos/owner/name/commits/...` uses the path, not -R, to choose a repository.
+        parts = args[1].split("/")
+        if len(parts) > 2 and parts[0] == "repos":
+            slug = "/".join(parts[1:3])
+    if slug == state["repository"]:
+        scope = state
+    else:
+        scope = state.get("other_repos", {}).get(slug)
+        if scope is None:
+            raise SystemExit(f"GraphQL: Could not resolve to a Repository with the name '{slug}'.")
+    scope["_slug"] = slug
     log = state.setdefault("calls", [])
     log.append(sys.argv[1:])
     if args[:2] == ["auth", "status"]:
@@ -270,11 +277,11 @@ def serve(path: Path) -> None:
     elif args[0] == "issue":
         result = issues(scope, args[1:])
     elif args[0] == "pr":
-        result = pulls(state, args[1:])
+        result = pulls(scope, args[1:])
     elif args[0] == "api":
-        result = api(state, args[1:])
+        result = api(scope, args[1:])
     elif args[:2] == ["run", "rerun"]:
-        result = rerun(state, args[2:])
+        result = rerun(scope, args[2:])
     else:
         raise SystemExit(f"fake gh: unsupported command {args}")
     scope.pop("_slug")
