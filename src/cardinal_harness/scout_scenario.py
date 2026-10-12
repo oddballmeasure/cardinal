@@ -123,6 +123,22 @@ def scenario(temp: Path, artifact: Path) -> dict:
            unknown.get("action") == "dropped" and unknown.get("repro_ok") == 0
            and "did not reproduce" in unknown.get("reason", "") and not filed(state, scout_replay.UNKNOWN.title), unknown)
     malformed, count = filed(state, scout_replay.MALFORMED.title), filed(state, scout_replay.COUNT.title)
+    relocated = filed(state, scout_replay.MISCOUNTED.title)
+    corrected = second_seen.get(scout_replay.MISCOUNTED.title, {})
+    with sqlite3.connect(product.home / "store.db") as db:
+        row = db.execute("SELECT proposal FROM scout_proposals WHERE title = ?",
+                         (scout_replay.MISCOUNTED.title,)).fetchone()
+    stored = json.loads(row[0])["evidence"][0] if row else {}
+    expect(checks, "a unique quote 25 lines from its citation is filed and its correction recorded",
+           corrected.get("action") == "filed" and stored.get("line_start") == 27
+           and stored.get("corrected_from") == [2, 2], {"result": corrected, "evidence": stored})
+    expect(checks, "the filed issue cites corrected reviewer evidence rather than the reviewer's miscount",
+           "## Evidence\n`tests/test_cli.py:27` (lines corrected from 1)" in relocated.get("body", "")
+           and scout_replay.MISCOUNTED.evidence[0].quote in relocated.get("body", ""), relocated)
+    ambiguous = second_seen.get(scout_replay.AMBIGUOUS.title, {})
+    expect(checks, "two out-of-window matches are dropped without a nearby match",
+           ambiguous.get("action") == "dropped" and "does not contain the quoted text" in ambiguous.get("reason", "")
+           and not filed(state, scout_replay.AMBIGUOUS.title), ambiguous)
     expect(checks, "auto: a bug with a track record and a failing repro is filed ready, saying why",
            malformed.get("labels") == ["cardinal:ready"] and "Filed ready by Cardinal's scout: 4 decided bug" in
            malformed.get("body", "") and "## Suggested test" in malformed.get("body", ""), malformed)

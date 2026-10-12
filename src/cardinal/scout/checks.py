@@ -22,16 +22,24 @@ def normalise(text: str) -> str:
 
 
 def locate(lines: list[str], item: Evidence) -> tuple[int, int] | None:
-    """The cited range if it holds the quote, else the nearest range of the same length within DRIFT
-    lines that does. The quote itself must be in the file either way."""
+    """Find a cited or nearby match first; otherwise accept a unique match anywhere in the file."""
     quote = normalise(item.quote)
     span = max(item.line_end - item.line_start, item.quote.strip("\n").count("\n"))
     starts = sorted(range(max(1, item.line_start - DRIFT), item.line_start + DRIFT + 1),
                     key=lambda start: abs(start - item.line_start))
-    for start in starts:
+    def matches(start: int) -> bool:
         end = min(start + span, len(lines))
-        if quote in normalise("\n".join(lines[start - 1:end])):
-            return start, end
+        return quote in normalise("\n".join(lines[start - 1:end]))
+
+    for start in starts:
+        if matches(start):
+            return start, min(start + span, len(lines))
+    # Only an unambiguous match outside the drift window can override a bad citation.
+    # Keep the same windows and whitespace comparison as the nearby search.
+    found = [start for start in range(1, len(lines) + 1) if matches(start)]
+    if len(found) == 1:
+        start = found[0]
+        return start, min(start + span, len(lines))
     return None
 
 
@@ -47,12 +55,15 @@ def evidence_problem(worktree: Path, items: list[Evidence], tracked: set[str], r
         if not 0 <= item.line_end - item.line_start < MAX_SPAN:
             return f"evidence {where} is not a range of 1-{MAX_SPAN} lines"
         lines = source.read_text(errors="replace").splitlines()
-        if item.line_start > len(lines):
-            return f"evidence {where} is past the end of the file ({len(lines)} lines)"
         found = locate(lines, item)
         if found is None:
+            if item.line_start > len(lines):
+                return f"evidence {where} is past the end of the file ({len(lines)} lines)"
             return f"evidence {where} does not contain the quoted text, nor do the {DRIFT} lines around it"
-        item.line_start, item.line_end = found
+        if found != (item.line_start, item.line_end):
+            if item.corrected_from is None:
+                item.corrected_from = (item.line_start, item.line_end)
+            item.line_start, item.line_end = found
     return None
 
 

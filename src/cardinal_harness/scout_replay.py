@@ -8,7 +8,7 @@ from cardinal_harness.replay_provider import Scripted, call
 
 AREAS = [Area(name="input loading", paths=["ledger/records.py"], focus="How --input files are read"),
          Area(name="merchant filter", paths=["ledger/query.py"], focus="Selecting transactions by merchant"),
-         Area(name="CLI entry point", paths=["ledger/__main__.py"], focus="Options, errors and output")]
+         Area(name="CLI entry point", paths=["ledger/__main__.py", "tests/test_cli.py"], focus="Options, errors and output")]
 RUN_MAIN = "ledger/__main__.py"
 LOAD = Evidence(path="ledger/records.py", line_start=8, line_end=8, quote="return json.loads(path.read_text())")
 CALL_LOAD = Evidence(path=RUN_MAIN, line_start=16, line_end=16, quote="rows = load_transactions(args.input)")
@@ -42,10 +42,18 @@ UNKNOWN = proposal("bug", "Unknown merchant prints nothing instead of an empty J
                    ['`--merchant Nobody` prints "[]"'], [RUN_MAIN])
 COUNT = proposal("feature", "Print the number of matched transactions with --count", [PRINT],
                  ['`--count` prints "3" for data/transactions.json'], [RUN_MAIN])
+TEST_PATH = "tests/test_cli.py"
+MISCOUNTED = proposal("feature", "Test a second merchant selection example", [
+    Evidence(path=TEST_PATH, line_start=2, line_end=2,
+             quote='assert [row["id"] for row in json.loads(result.stdout)] == ["t-002"]')],
+    ['`test_merchant_selection` checks a second merchant example'], [TEST_PATH])
+AMBIGUOUS = proposal("feature", "Add explicit CLI test failure details", [
+    Evidence(path=TEST_PATH, line_start=1, line_end=1, quote="assert result.returncode == 0, result.stderr")],
+    ['`test_default_json_output` reports a detailed error'], [TEST_PATH])
 
 FINDINGS = {"input loading": [MISSING_INPUT, FABRICATED, DUPLICATE],
             "merchant filter": [CASE, MIN_AMOUNT, ACCENTS],
-            "CLI entry point": [MALFORMED, UNKNOWN, COUNT]}
+            "CLI entry point": [MALFORMED, UNKNOWN, COUNT, MISCOUNTED, AMBIGUOUS]}
 VERDICTS = {CASE.title: ("wrong", "ledger/query.py:7 matches merchants exactly, as test_merchant_selection expects."),
             ACCENTS.title: ("product_decision", "Whether Cafe should match Café is a choice about the product.")}
 
@@ -98,6 +106,9 @@ def model(context: dict):
     if stage == "scout_reviewer":
         verdict, reason = VERDICTS.get(title, ("confirmed", "Traced the cited lines; the behaviour is as stated."))
         evidence = context["proposal"]["evidence"] if verdict == "confirmed" else []
+        if title == MISCOUNTED.title:
+            # Reviewer independently miscounts too: the final issue must use checked reviewer evidence.
+            evidence = [Evidence(path=TEST_PATH, line_start=1, line_end=1, quote=MISCOUNTED.evidence[0].quote)]
         review = ProposalReview(verdict=verdict, reason=reason, evidence=evidence)
         return Scripted(messages=iter([
             call("read_file", {"file_path": "/skills/scout-reviewer/SKILL.md"}, "skill"),
