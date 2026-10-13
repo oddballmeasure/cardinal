@@ -120,7 +120,7 @@ def test_graceful_daemon_restart_requeues_serial_and_parallel_runs_for_both_sign
 
 def test_a_killed_worker_is_settled_by_the_next_poll_and_reruns():
     report = harness("offline", "--scenario", "worker-killed", timeout=900)
-    assert len(report["checks"]) == 4
+    assert len(report["checks"]) == 5
 
 
 def test_ci_failure_log_goes_back_to_the_coder_and_the_repaired_head_merges():

@@ -21,6 +21,7 @@ and the independent acceptance tests in tests/acceptance.
 import itertools
 import json
 import os
+import re
 import shutil
 import signal
 import sqlite3
@@ -648,14 +649,24 @@ def worker_killed(temp: Path, artifact: Path) -> dict:
     product = configure(temp, bare, state_path, artifact, max_parallel_runs=2)
     checks: dict = {}
     command = [sys.executable, "-m", "cardinal.cli.main", "--home", str(product.home), "run", "17"]
-    victim = subprocess.Popen(command, env=product.env, start_new_session=True,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    deadline = time.monotonic() + 120
-    # Once its worktree exists, so the kill lands mid-run rather than inside the first clone.
-    while time.monotonic() < deadline and not any(run["status"] == "running" and run["branch"] for run in product.status(17)):
-        time.sleep(0.2)
+    # Only the victim gets the hold: its scripted coder writes `reached`, then blocks until killed, so the
+    # kill lands before any PR exists. The later `daemon --once` runs do not get it and finish normally.
+    gate = temp / "kill-gate"
+    gate.mkdir()
+    victim = subprocess.Popen(command, env={**product.env, "CARDINAL_REPLAY_HOLD_DIR": str(gate)},
+                              start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    deadline = time.monotonic() + 180
+    while time.monotonic() < deadline and not (gate / "reached").exists() and victim.poll() is None:
+        time.sleep(0.1)
+    reached = (gate / "reached").exists()
     os.killpg(victim.pid, signal.SIGKILL)
     victim.wait()
+    at_kill = json.loads(state_path.read_text())
+    prs_for_17 = [pr for pr in at_kill.get("prs", [])
+                  if re.search(r"(?<!\d)17(?!\d)", f"{pr.get('headRefName', '')} {pr.get('body') or ''}")]
+    expect(checks, "at the kill no PR exists for issue 17 and it is still OPEN",
+           reached and not prs_for_17 and at_kill["issues"]["17"]["state"] == "OPEN",
+           {"reached": reached, "prs": prs_for_17, "state": at_kill["issues"]["17"]["state"]})
     killed = product.status(17)
     expect(checks, "the run was killed while running", [run["status"] for run in killed] == ["running"], killed)
     code, results = product("daemon", "--once")
