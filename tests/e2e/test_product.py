@@ -105,6 +105,14 @@ def test_documentation_only_merges_without_tests_but_code_and_unmet_requirements
     assert len(report["checks"]) == 10
 
 
+def test_claude_code_engine_runs_an_issue_end_to_end_against_a_fake_claude_cli():
+    """Every role is `claude-code:` and CARDINAL_MODEL_PROVIDER is unset, so the real engine and SDK run:
+    the fake `claude` CLI answers the stream-json control protocol and drives each stage's tools through
+    the SDK's in-process MCP server. The README issue merges, closes and deploys."""
+    report = harness("offline", "--scenario", "claude-code", timeout=900)
+    assert len(report["checks"]) == 11
+
+
 def test_parallel_workers_plan_one_at_a_time_and_land_sibling_merges():
     """Three workers: #11, #17 and #18 overlap while #12 waits for #11, which it builds on. Planning
     holds the intake lock one run at a time; #17 and #18 edit the same file, so the later merge

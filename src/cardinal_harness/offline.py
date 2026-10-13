@@ -13,6 +13,7 @@
           #17 and #18 both append to the README, so the later merge brings in the earlier one.
 `daemon-restart`: graceful daemon SIGTERM/SIGINT mid-run requeues serial and parallel workers.
 `worker-killed`: a run killed outright is settled as failed by the next daemon poll, then reruns.
+`claude-code`: README issue #19 with every role on `claude-code:` against a fake `claude` CLI.
 `scout`: `cardinal scout` proposes reviewed, code-checked issues and learns from their outcomes.
 Every pass is judged from outside: fake-GitHub state, the bare remote's refs, `status --json`,
 and the independent acceptance tests in tests/acceptance.
@@ -31,7 +32,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from cardinal_harness import cleanup, fake_gh
+from cardinal_harness import cleanup, fake_claude, fake_gh
 from cardinal_harness.product import FIXTURES, ROOT, Product, json_file, product_env, write_config
 
 SLUG = "example/ledger"
@@ -91,19 +92,26 @@ def world(temp: Path, ready: list[int], ci: list[str] | None = None,
 
 def configure(temp: Path, bare: Path, state_path: Path, artifact: Path, required_checks: list[str] | None = None,
               env: dict[str, str] | None = None, max_parallel_runs: int | None = None,
-              limits: dict[str, int] | None = None) -> Product:
+              limits: dict[str, int] | None = None, engine: str = "replay:scripted") -> Product:
+    """`engine` is every role's model spec. A `claude-code:` spec runs the real engine against the fake
+    `claude` CLI: CARDINAL_MODEL_PROVIDER is left unset, since it would bypass that engine."""
     home = temp / "home"
-    write_config(home, models={role: "replay:scripted" for role in
+    write_config(home, models={role: engine for role in
                                ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor")},
                  slug=SLUG, remote_url=str(bare), test_command=[sys.executable, "-m", "pytest", "-q", "tests"],
                  required_checks=required_checks or [CHECK], paths_off_limits=[".github/"], deploy="local",
                  limits={"coder_attempts": 2, "ci_poll_seconds": 1, "ci_timeout_seconds": 120, **(limits or {})},
                  max_parallel_runs=max_parallel_runs)
     fake_bin = fake_gh.install(temp / "bin")
+    claude = {}
+    if engine.startswith("claude-code:"):
+        claude = {"CARDINAL_CLAUDE_CLI_PATH": str(fake_claude.install(temp / "claude-bin")),
+                  "CARDINAL_FAKE_CLAUDE_LOG": str(temp / "claude-invocations.jsonl")}
     env = product_env({
         "PATH": f"{fake_bin.parent}{os.pathsep}{os.environ['PATH']}",
         "CARDINAL_FAKE_GH_STATE": str(state_path),
-        "CARDINAL_MODEL_PROVIDER": "cardinal_harness.replay_provider:provider",
+        **({} if claude else {"CARDINAL_MODEL_PROVIDER": "cardinal_harness.replay_provider:provider"}),
+        **claude,
         "CARDINAL_DEPLOY_HOST": "cardinal_harness.mock_host:factory",
         "CARDINAL_MOCK_HOST_FIXTURE": str(FIXTURES / "deploy_hosts" / "default.json"),
         **(env or {}),
@@ -1029,6 +1037,66 @@ sys.exit(subprocess.call([os.environ["CARDINAL_REAL_GIT"], *args]))
     return {"checks": checks}
 
 
+def claude_code(temp: Path, artifact: Path) -> dict:
+    """README issue #19 end to end with every role on `claude-code:`: the real engine and SDK talk to a fake
+    `claude` CLI over stream-json, and the fake drives each stage's tools through the SDK's MCP server."""
+    bare, state_path, _ = world(temp, ready=[19])
+    product = configure(temp, bare, state_path, artifact, engine="claude-code:fake-sonnet")
+    checks: dict = {}
+    base = git(bare, "rev-parse", "refs/heads/main")
+    code, result = product("run", "19")
+    expect(checks, "cardinal run exits 0", code == 0 and isinstance(result, dict) and result.get("status") == "done", result)
+    state = json.loads(state_path.read_text())
+    run = product.status(19)[-1]
+    main = git(bare, "rev-parse", "refs/heads/main")
+    merged = [pr for pr in state["prs"] if pr["state"] == "MERGED"]
+    expect(checks, "one PR merged the verified head onto main",
+           len(state["prs"]) == 1 and len(merged) == 1 and main != base and run.get("merge_sha") == main
+           and merged[0]["headRefOid"] == run.get("head_sha"), {"main": main, "prs": state["prs"]})
+    expect(checks, "issue closed and labelled done", state["issues"]["19"]["state"] == "CLOSED"
+           and state["issues"]["19"]["labels"] == ["cardinal:done"], state["issues"]["19"])
+    expect(checks, "merged README carries the requested line",
+           "Use `python -m ledger --help` to view usage information." in git(bare, "show", f"{main}:README.md").splitlines())
+    expect(checks, "deployed revision is the merge", run.get("deployed_sha") == main, run.get("deployed_sha"))
+
+    log = Path(product.env["CARDINAL_FAKE_CLAUDE_LOG"])
+    records = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    calls = [item for item in records if item["event"] == "invocation"]
+    stages = ["orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer"]
+    expect(checks, "the replay provider was not in play", "CARDINAL_MODEL_PROVIDER" not in product.env
+           and "claude-code:fake-sonnet" in (product.home / "cardinal.toml").read_text())
+    expect(checks, "every role's agent calls reached the fake claude CLI",
+           {item["stage"] for item in calls} == set(stages) and all(item["model"] == "fake-sonnet" for item in calls),
+           sorted({item["stage"] for item in calls}))
+    recorded = [item["stage"] for item in run["agent_calls"]]
+    expect(checks, "the product recorded exactly the calls the fake served",
+           bool(recorded) and all(recorded.count(stage) == sum(item["stage"] == stage for item in calls)
+                                  for stage in set(recorded)) and set(recorded) <= {item["stage"] for item in calls},
+           {"recorded": recorded, "served": [item["stage"] for item in calls]})
+    schemas = {item["stage"]: (item["json_schema"] or {}).get("title") for item in calls}
+    expect(checks, "structured stages sent their output schema, others none",
+           schemas.get("orchestrator") == "IntakeDecision" and schemas.get("profiler") == "ProfileChunk"
+           and schemas.get("verifier") == "VerifierAssessment"
+           and all(schemas.get(stage) is None for stage in ("coder", "pr_manager", "deployer")), schemas)
+    tools = {item["stage"]: set(item["tools"]) for item in calls}
+    expect(checks, "each stage was served its own MCP tools",
+           {"read_file", "find_repo_context"} <= tools.get("orchestrator", set())
+           and "write_file" not in tools.get("orchestrator", set())
+           and {"write_file", "edit_file", "run_repo_tests"} <= tools.get("coder", set())
+           and "write_file" not in tools.get("verifier", set())
+           and {"list_open_prs", "create_pull_request", "wait_for_ci", "merge_pull_request"} <= tools.get("pr_manager", set())
+           and {"execute_deploy", "check_health"} <= tools.get("deployer", set()), {k: sorted(v) for k, v in tools.items()})
+    used = {item["stage"] for item in records if item["event"] == "tool_call" and item["tool"] in
+            {"edit_file", "write_file", "merge_pull_request", "execute_deploy"}}
+    expect(checks, "the scripted tool calls ran through the engine's MCP server",
+           used == {"coder", "pr_manager", "deployer"}, sorted(used))
+    product.keep_store()
+    if log.exists():
+        shutil.copy2(log, artifact / "claude_invocations.jsonl")
+    json_file(artifact / "github_state.json", state)
+    return {"checks": checks, "status": [run], "invocations": product.invocations}
+
+
 def monitor(temp: Path, artifact: Path) -> dict:
     from cardinal_harness.monitor_scenario import scenario  # imports offline; kept local to avoid a cycle
     return scenario(temp, artifact)
@@ -1043,7 +1111,8 @@ SCENARIOS = {"single": single, "daemon": daemon, "multi-daemon": multi_daemon, "
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
              "parallel": parallel, "daemon-restart": daemon_restart, "worker-killed": worker_killed,
              "scout": scout, "documentation": documentation, "file-tool-refusal": file_tool_refusal,
-             "gh-retries": gh_retries, "push-retries": push_retries, "setup-recovery": setup_recovery}
+             "gh-retries": gh_retries, "push-retries": push_retries, "setup-recovery": setup_recovery,
+               "claude-code": claude_code}
 
 
 def run(scenario: str, artifact: Path) -> dict:
