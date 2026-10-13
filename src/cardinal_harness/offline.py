@@ -1090,11 +1090,66 @@ def claude_code(temp: Path, artifact: Path) -> dict:
             {"edit_file", "write_file", "merge_pull_request", "execute_deploy"}}
     expect(checks, "the scripted tool calls ran through the engine's MCP server",
            used == {"coder", "pr_manager", "deployer"}, sorted(used))
+    expect(checks, "no schema the fake CLI received contains prefixItems",
+           bool(calls) and all(item.get("prefix_items") == [] for item in calls),
+           [(item["stage"], item.get("prefix_items")) for item in calls])
     product.keep_store()
     if log.exists():
         shutil.copy2(log, artifact / "claude_invocations.jsonl")
     json_file(artifact / "github_state.json", state)
+
+    # A tuple field makes pydantic emit `prefixItems`, which the real CLI's strict mode refuses. No stage's
+    # schema has one today, so the engine's schema rewrite is checked on one that does, and the fake CLI
+    # rejects any schema it is sent that still contains one.
+    from cardinal.agents.claude_code import strict_schema
+    from cardinal.contracts.scout import ScoutFindings
+    raw = ScoutFindings.model_json_schema()
+    expect(checks, "a tuple schema reaches the CLI without prefixItems",
+           bool(fake_claude.prefix_items(raw)) and not fake_claude.prefix_items(strict_schema(raw)),
+           {"raw": fake_claude.prefix_items(raw), "strict": fake_claude.prefix_items(strict_schema(raw))})
+
+    # One call reports an API-key session: the run must stop as `provider` before any tool runs.
+    keyed = temp / "api-key"
+    keyed.mkdir()
+    bare, state_path, _ = world(keyed, ready=[19])
+    product = configure(keyed, bare, state_path, artifact / "api-key", engine="claude-code:fake-sonnet",
+                        env={"CARDINAL_FAKE_CLAUDE_API_KEY_STAGE": "orchestrator"})
+    code, result = product("run", "19")
+    rows = product.status(19)
+    records = fake_records(product)
+    sessions = {item["pid"] for item in records if item["event"] == "fault" and item["stage"] == "orchestrator"
+                and item["kind"] == "api_key"}  # earlier stages (profiling) legitimately ran tools in other sessions
+    expect(checks, "the call whose init reports apiKeySource ANTHROPIC_API_KEY failed as provider, with no tool executed",
+           code == 1 and bool(rows) and rows[-1].get("failure_kind") == "provider" and len(sessions) == 1
+           and not any(item["event"] == "tool_call" and item["pid"] in sessions for item in records)
+           and not any(item["event"] == "tool_call" and item["stage"] == "orchestrator" for item in records),
+           {"result": result, "failure_kind": rows[-1].get("failure_kind") if rows else None,
+            "tool_calls": [(item["stage"], item["tool"]) for item in records if item["event"] == "tool_call"][-5:]})
+    product.keep_store()
+
+    # One call is told its window is spent for two seconds: it waits, repeats the same call, and the run completes.
+    limited = temp / "usage-limit"
+    limited.mkdir()
+    bare, state_path, _ = world(limited, ready=[19])
+    product = configure(limited, bare, state_path, artifact / "usage-limit", engine="claude-code:fake-sonnet",
+                        env={"CARDINAL_FAKE_CLAUDE_LIMIT_STAGE": "orchestrator"})
+    code, result = product("run", "19")
+    records = fake_records(product)
+    sessions = [item for item in records if item["event"] == "invocation" and item["stage"] == "orchestrator"]
+    waits = [item for path in (product.home / "logs").glob("*.jsonl") for line in path.read_text().splitlines()
+             for item in [json.loads(line)] if item.get("event") == "usage_limit"]
+    expect(checks, "a rejected RateLimitEvent two seconds ahead caused a wait and a successful retry of the same call",
+           code == 0 and isinstance(result, dict) and result.get("status") == "done" and bool(sessions)
+           and any(item["event"] == "fault" and item["stage"] == "orchestrator" and item["kind"] == "rate_limit" for item in records)
+           and len(waits) == 1 and isinstance(waits[0]["data"]["resets_at"], (int, float)),
+           {"result": result, "waits": waits, "sessions": len(sessions)})
+    product.keep_store()
     return {"checks": checks, "status": [run], "invocations": product.invocations}
+
+
+def fake_records(product: Product) -> list[dict]:
+    log = Path(product.env["CARDINAL_FAKE_CLAUDE_LOG"])
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
 def monitor(temp: Path, artifact: Path) -> dict:

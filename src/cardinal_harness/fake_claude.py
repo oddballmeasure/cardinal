@@ -20,6 +20,7 @@ import queue
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 
 SERVER = "cardinal"
@@ -36,6 +37,7 @@ class Channel:
         self.waiting: dict[str, queue.Queue] = {}
         self.write_lock = threading.Lock()
         self.counter = 0
+        self.closed = threading.Event()  # set when the SDK closes stdin
         threading.Thread(target=self.read, daemon=True).start()
 
     def send(self, message: dict) -> None:
@@ -60,6 +62,7 @@ class Channel:
             elif kind == "user":
                 self.users.put(message)
         self.users.put(None)
+        self.closed.set()
         for waiter in list(self.waiting.values()):
             waiter.put({"subtype": "error", "error": "stdin closed"})
 
@@ -89,6 +92,32 @@ class Channel:
         if reply.get("error"):
             raise RuntimeError(f"{method}: {reply['error']}")
         return reply.get("result") or {}
+
+
+def prefix_items(node, path: str = "") -> list[str]:
+    """Where a schema uses `prefixItems`, which the CLI's strict mode refuses."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            found += [f"{path}/{key}"] if key == "prefixItems" else []
+            found += prefix_items(value, f"{path}/{key}")
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found += prefix_items(value, f"{path}/{index}")
+    return found
+
+
+def scripted_fault(log: Path | None, stage: str) -> str | None:
+    """A fault named for this stage by the environment, on the stage's first invocation only: the retry
+    of the same call must find the CLI healthy. `api_key` reports an API-key session; `rate_limit` sends a
+    rejected rate-limit event whose window reopens in two seconds."""
+    for variable, kind in (("CARDINAL_FAKE_CLAUDE_API_KEY_STAGE", "api_key"), ("CARDINAL_FAKE_CLAUDE_LIMIT_STAGE", "rate_limit")):
+        if os.environ.get(variable) != stage or log is None:
+            continue
+        seen = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+        if not any(item["event"] == "fault" and item["stage"] == stage and item.get("kind") == kind for item in seen):
+            return kind
+    return None
 
 
 def flags(argv: list[str]) -> dict:
@@ -305,17 +334,30 @@ def main(argv: list[str] | None = None) -> int:
     name = found.group(1) if found else "probe"
     log = Path(os.environ["CARDINAL_FAKE_CLAUDE_LOG"]) if os.environ.get("CARDINAL_FAKE_CLAUDE_LOG") else None
     run = Session(channel, model, name.replace("-", "_").replace("deployment_manager", "deployer"), log)
-    channel.send({"type": "system", "subtype": "init", "apiKeySource": "none", "cwd": os.getcwd(),
+    fault = scripted_fault(log, run.stage)
+    if fault:
+        run.record("fault", kind=fault)  # written first: the SDK may end this process as soon as it sees the fault
+    channel.send({"type": "system", "subtype": "init", "cwd": os.getcwd(),
+                  "apiKeySource": "ANTHROPIC_API_KEY" if fault == "api_key" else "none",
                   "session_id": SESSION, "tools": [], "mcp_servers": [{"name": SERVER, "status": "connected"}],
                   "model": model, "permissionMode": "default", "slash_commands": [], "output_style": "default"})
+    if fault == "rate_limit":
+        channel.send({"type": "rate_limit_event", "uuid": "fake-rate-limit", "session_id": SESSION,
+                      "rate_limit_info": {"status": "rejected", "resetsAt": time.time() + 2, "rateLimitType": "five_hour"}})
+    if fault and channel.closed.wait(15):
+        return 0  # the engine stopped the session, as it must, before any tool or result
     try:
         tools = []
         if name != "probe":
             channel.mcp("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
                                        "clientInfo": {"name": "fake-claude", "version": "0"}})
             tools = channel.mcp("tools/list").get("tools", [])
+        tool_schemas = {item["name"]: item.get("inputSchema") for item in tools}
+        strict = prefix_items({"output_format": schema, **tool_schemas})
         run.record("invocation", model=model, json_schema=schema, prompt=prompt[:200], args=[a for a in argv if a.startswith("--")],
-                   tools=[item["name"] for item in tools], tool_schemas={item["name"]: item.get("inputSchema") for item in tools})
+                   tools=[item["name"] for item in tools], tool_schemas=tool_schemas, prefix_items=strict)
+        if strict:  # what the real CLI's strict mode does with a schema it cannot represent
+            raise ValueError(f"strict schema validation failed: prefixItems is not supported at {strict}")
         if name == "probe":
             run.finish("ok")
         else:

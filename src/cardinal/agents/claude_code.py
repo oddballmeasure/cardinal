@@ -147,7 +147,7 @@ def file_tools(backend, *, writable: bool) -> list:
 
 def role_tool(base, watch: Watch, cancel: anyio.CancelScope):
     """A role's LangChain tool, served over MCP. Its exceptions end the call, as they do on the other path."""
-    schema = base.tool_call_schema.model_json_schema()
+    schema = strict_schema(base.tool_call_schema.model_json_schema())  # the CLI validates tool schemas strictly too
     schema.pop("title", None)
 
     @tool(base.name, base.description, schema, annotations=ToolAnnotations(maxResultSizeChars=RESULT_CHARS))
