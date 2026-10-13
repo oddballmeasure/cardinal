@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
@@ -293,7 +294,19 @@ def resolve_conflicts(context: dict) -> dict[str, str]:
     return resolved
 
 
+def hold_for_kill(context: dict) -> None:
+    """Opt-in gate for the worker-killed scenario: when CARDINAL_REPLAY_HOLD_DIR names a directory and the
+    issue is 17, write a 'reached' marker there, then block until killed. The coder stage precedes any PR."""
+    gate = os.environ.get("CARDINAL_REPLAY_HOLD_DIR")
+    if not gate or context["issue"]["number"] != 17:
+        return
+    Path(gate, "reached").write_text(str(os.getpid()))
+    while True:
+        time.sleep(0.5)
+
+
 def coder(context: dict, title: str):
+    hold_for_kill(context)
     ticket_id = context["ticket"]["id"]
     if ticket_id.startswith("SYNC-"):
         writes = resolve_conflicts(context)
