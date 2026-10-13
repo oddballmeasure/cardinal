@@ -107,7 +107,7 @@ def deep_agent(call: AgentCall, spend: Spend, recursion_limit: int, model_timeou
 
 def subscription(call: AgentCall, spend: Spend, recursion_limit: int, model_timeout: int):
     """Waits out a spent usage window and repeats the call: the work is slower, never failed or billed."""
-    from cardinal.agents import claude_code  # noqa: PLC0415 - the SDK is slow to import and only this path needs it
+    from cardinal.agents import claude_code  # the SDK is slow to import; only this path needs it
 
     while True:
         try:

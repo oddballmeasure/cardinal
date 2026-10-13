@@ -177,18 +177,35 @@ def record(message, spend: Spend) -> None:
                 spend.transcript.append({"type": "tool", "content": str(block.content)[:4000], "tool_calls": None})
 
 
-def options(call, model: str, tools: list, max_turns: int, skills: Path) -> ClaudeAgentOptions:
+def strict_schema(node):
+    """Claude Code checks --json-schema in strict mode, which refuses `prefixItems` (pydantic's tuples).
+    A tuple becomes a fixed-length array of its item types; pydantic still validates the exact shape."""
+    if isinstance(node, list):
+        return [strict_schema(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    result = {key: strict_schema(value) for key, value in node.items() if key != "prefixItems"}
+    if "prefixItems" in node:
+        items = strict_schema(node["prefixItems"])
+        result["items"] = items[0] if all(item == items[0] for item in items) else {"anyOf": items}
+        result["minItems"] = result["maxItems"] = len(items)
+    return result
+
+
+def options(call, model: str, tools: list, max_turns: int, skills: Path, stderr: list[str]) -> ClaudeAgentOptions:
     server = create_sdk_mcp_server(SERVER, tools=tools)
     return ClaudeAgentOptions(
         model=model, system_prompt=system_prompt(skills), cwd=str(call.context_dir),
         tools=[], allowed_tools=[f"mcp__{SERVER}__{item.name}" for item in tools],
         mcp_servers={SERVER: server}, strict_mcp_config=True, setting_sources=[], max_turns=max_turns,
-        output_format={"type": "json_schema", "schema": call.schema.model_json_schema()} if call.schema else None,
+        output_format={"type": "json_schema", "schema": strict_schema(call.schema.model_json_schema())}
+        if call.schema else None,
         env={**dict.fromkeys(BILLING_ENV, ""), "MCP_TOOL_TIMEOUT": str(6 * 3600 * 1000)},
+        stderr=stderr.append,
     )
 
 
-async def session(call, model: str, max_turns: int, timeout: int, skills: Path, spend: Spend):
+async def session(call, model: str, max_turns: int, timeout: int, skills: Path, spend: Spend, stderr: list[str]):
     watch = Watch()
     result: ResultMessage | None = None
     async with anyio.create_task_group() as group:
@@ -205,7 +222,7 @@ async def session(call, model: str, max_turns: int, timeout: int, skills: Path, 
                     group.cancel_scope.cancel()
 
         group.start_soon(watchdog)
-        stream = query(prompt=call.prompt, options=options(call, model, tools, max_turns, skills))
+        stream = query(prompt=call.prompt, options=options(call, model, tools, max_turns, skills, stderr))
         async with aclosing(stream):
             async for message in stream:
                 watch.last = time.monotonic()
@@ -233,15 +250,24 @@ def stop(message, stage: str) -> Exception | None:
         info = message.rate_limit_info
         # Overage is pay-as-you-go: treat it as the end of the window, never as permission to continue.
         if info.status == "rejected" or info.raw.get("isUsingOverage"):
+            state = "overage" if info.raw.get("isUsingOverage") else info.status
             return UsageLimit(info.resets_at or time.time() + LIMIT_RETRY_SECONDS,
-                              f"{stage}: {info.rate_limit_type} usage limit {'overage' if info.raw.get('isUsingOverage') else info.status}")
+                              f"{stage}: {info.rate_limit_type} usage limit {state}")
     return None
 
 
 def run(call, spend: Spend, recursion_limit: int, timeout: int, skills: Path):
     """Returns the raw structured output (or the final text when there is no schema)."""
-    # LangGraph counts about two steps per tool turn, so the same limit bounds both engines alike.
-    result = anyio.run(session, call, model_name(call.model_spec), max(recursion_limit // 2, 10), timeout, skills, spend)
+    stderr: list[str] = []
+    try:
+        # LangGraph counts about two steps per tool turn, so the same limit bounds both engines alike.
+        result = anyio.run(session, call, model_name(call.model_spec), max(recursion_limit // 2, 10), timeout, skills,
+                           spend, stderr)
+    except BaseExceptionGroup as group:  # the session's task group wraps whatever ended it
+        failure = group.exceptions[0] if len(group.exceptions) == 1 else group
+        if isinstance(failure, ClaudeSDKError):  # the CLI itself failed; its stderr says why
+            raise StageFailure(FailureKind.PROVIDER, f"{call.stage}: {failure}: {' '.join(stderr)[-1500:]}") from failure
+        raise failure from None
     if result is None:
         raise StageFailure(FailureKind.PROVIDER, f"{call.stage}: Claude Code ended without a result")
     if result.subtype == "error_max_turns":
