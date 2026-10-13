@@ -10,6 +10,8 @@ import os
 
 from langchain.chat_models import init_chat_model
 
+SUBSCRIPTION = "claude-code:"  # runs on the Claude Code subscription (agents/claude_code.py), not a chat model
+
 
 def resolve(spec: str, context: dict, timeout: int):
     hook = os.environ.get("CARDINAL_MODEL_PROVIDER")

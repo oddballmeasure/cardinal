@@ -28,7 +28,7 @@ from langchain.chat_models import init_chat_model
 from cardinal_harness import cleanup as cleaner_agent
 from cardinal_harness.acceptance import run_checks
 from cardinal_harness.contracts import CleanupIssue, CleanupRequest
-from cardinal_harness.github_setup import (discover_cases, load_model_key, prepare_test_repo,
+from cardinal_harness.github_setup import (SUBSCRIPTION, discover_cases, load_model_key, prepare_test_repo,
                                            use_github_cli_git_credentials, wait_baseline_ci)
 from cardinal_harness.product import FIXTURES, ROOT, Product, json_file, product_env, write_config
 
@@ -171,13 +171,14 @@ def run_locked(suite_path: Path, model: str, artifact: Path, only: list[str] | N
     with tempfile.TemporaryDirectory(prefix="cardinal-live-") as name:
         temp = Path(name)
         try:
-            load_model_key()
+            model_env = load_model_key(model)
             use_github_cli_git_credentials()
             report["test_repo_preflight"] = prepare_test_repo(url, target.checkout)
             json_file(artifact / "test_repo_preflight.json", report["test_repo_preflight"])
-            probe = init_chat_model(model).invoke("Reply with OK only.")
-            if str(probe.content).strip() != "OK":
-                raise ValueError(f"Model probe returned {probe.content!r}")
+            if not model.startswith(SUBSCRIPTION):  # the product's repos check probes the subscription
+                probe = init_chat_model(model).invoke("Reply with OK only.")
+                if str(probe.content).strip() != "OK":
+                    raise ValueError(f"Model probe returned {probe.content!r}")
             baseline = remote_main(url)
             report["baseline_sha"] = baseline
             if suite.get("baseline_sha") and suite["baseline_sha"] != baseline:
@@ -201,7 +202,7 @@ def run_locked(suite_path: Path, model: str, artifact: Path, only: list[str] | N
                          test_command=target.test_command, required_checks=[target.check],
                          paths_off_limits=target.paths_off_limits, deploy=target.deploy)
             product = Product(home, product_env({
-                "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"],
+                **model_env,
                 "CARDINAL_DEPLOY_HOST": "cardinal_harness.mock_host:factory",
                 "CARDINAL_MOCK_HOST_FIXTURE": str(FIXTURES / "deploy_hosts" / "default.json"),
             }), artifact)
@@ -319,7 +320,7 @@ def cleanup(temp: Path, repository: str, url: str, baseline: str, parked: list[d
 
 def clean_from_manifest(manifest: Path, model: str, artifact: Path) -> dict:
     """Restore the live repository from a pinned CleanupRequest, e.g. after an interrupted suite."""
-    load_model_key()
+    load_model_key(model)
     use_github_cli_git_credentials()
     request = CleanupRequest.model_validate_json(manifest.read_text())
     with tempfile.TemporaryDirectory(prefix="cardinal-clean-") as name:

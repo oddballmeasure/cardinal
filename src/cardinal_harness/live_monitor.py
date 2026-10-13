@@ -105,7 +105,7 @@ def run(model: str, artifact: Path) -> dict:
     with tempfile.TemporaryDirectory(prefix="cardinal-propagate-") as name:
         temp = Path(name)
         try:
-            load_model_key()
+            model_env = load_model_key(model)
             use_github_cli_git_credentials()
             report["test_repo_preflight"] = prepare_test_repo(url, target.checkout)
             baseline = remote_main(url)
@@ -134,7 +134,7 @@ def run(model: str, artifact: Path) -> dict:
                                    "monitor": {"min_occurrences": case["requests"], "window_hours": 1,
                                                "max_issues_per_pass": 3}})
             product = Product(home, product_env({
-                "OPENAI_API_KEY": os.environ["OPENAI_API_KEY"], "CARDINAL_INGEST_TOKEN": TOKEN,
+                **model_env, "CARDINAL_INGEST_TOKEN": TOKEN,
                 "CARDINAL_DEPLOY_HOST": "cardinal_harness.mock_host:factory",
                 "CARDINAL_MOCK_HOST_FIXTURE": str(FIXTURES / "deploy_hosts" / "default.json"),
             }), artifact)

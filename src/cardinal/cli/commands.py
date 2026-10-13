@@ -8,6 +8,7 @@ import sys
 from contextlib import closing
 
 from cardinal import app
+from cardinal.agents.provider import SUBSCRIPTION
 from cardinal.config.load import TEMPLATE, load
 from cardinal.daemon import loop
 from cardinal.github import issues
@@ -157,6 +158,9 @@ def _executable(name: str) -> str:
 def _model_key(spec: str) -> str:
     if os.environ.get("CARDINAL_MODEL_PROVIDER"):
         return "model provider hook set"
+    if spec.startswith(SUBSCRIPTION):
+        from cardinal.agents import claude_code  # noqa: PLC0415 - the SDK is slow to import; only this probe needs it
+        return claude_code.probe(spec)
     provider = spec.partition(":")[0]
     key = PROVIDER_KEYS.get(provider)
     if key is None:

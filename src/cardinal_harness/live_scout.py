@@ -174,7 +174,7 @@ def run_locked(model: str, artifact: Path, keep: bool) -> dict:
     with tempfile.TemporaryDirectory(prefix="cardinal-live-scout-") as name:
         temp = Path(name)
         try:
-            load_model_key()
+            model_env = load_model_key(model)
             use_github_cli_git_credentials()
             clone = temp / "seed"
             subprocess.run(["git", "clone", "-q", url, str(clone)], check=True, capture_output=True, timeout=300)
@@ -187,7 +187,7 @@ def run_locked(model: str, artifact: Path, keep: bool) -> dict:
                          test_command=target.test_command, required_checks=[target.check],
                          paths_off_limits=target.paths_off_limits, deploy=None, sections={"scout": spec["scout"]},
                          base_branch=branch)
-            product = Product(home, product_env({"OPENAI_API_KEY": os.environ["OPENAI_API_KEY"]}), artifact)
+            product = Product(home, product_env(model_env), artifact)
             code, report["repos_check"] = product("repos", "check")
             if code != 0:
                 raise ValueError(f"cardinal repos check failed: {report['repos_check']}")

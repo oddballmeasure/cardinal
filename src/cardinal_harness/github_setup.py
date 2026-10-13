@@ -35,10 +35,16 @@ def gh(*args: str, timeout: int = 60) -> str:
     return subprocess.run(["gh", *args], text=True, capture_output=True, check=True, timeout=timeout).stdout
 
 
-def load_model_key() -> None:
-    """The harness reads .env; the product only ever sees the process environment."""
+SUBSCRIPTION = "claude-code:"
+
+
+def load_model_key(model: str | None = None) -> dict[str, str]:
+    """The harness reads .env; the product only ever sees the process environment. Returns what the
+    product's environment needs for the model: a claude-code model runs on the logged-in subscription."""
+    if model and model.startswith(SUBSCRIPTION):
+        return {}
     if os.environ.get("OPENAI_API_KEY"):
-        return
+        return {"OPENAI_API_KEY": os.environ["OPENAI_API_KEY"]}
     env_file = ROOT / ".env"
     if env_file.is_file():
         for line in env_file.read_text().splitlines():
@@ -47,6 +53,7 @@ def load_model_key() -> None:
                 break
     if not os.environ.get("OPENAI_API_KEY"):
         raise ValueError("The live suite requires OPENAI_API_KEY")
+    return {"OPENAI_API_KEY": os.environ["OPENAI_API_KEY"]}
 
 
 def use_github_cli_git_credentials() -> None:

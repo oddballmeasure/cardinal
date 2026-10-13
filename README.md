@@ -26,7 +26,7 @@ Cardinal needs:
 | Python 3.13+ and [uv](https://docs.astral.sh/uv/) | Cardinal and its lockfile |
 | `git` | Clones, worktrees and pushes |
 | [`gh`](https://cli.github.com/), logged in with `gh auth login` | Issues, labels, PRs and checks. Git pushes use `gh`'s credential, so that account needs push, pull-request, label and workflow re-run rights on every target repository |
-| A model API key | `OPENAI_API_KEY` for `openai:` models, `ANTHROPIC_API_KEY` for `anthropic:` models |
+| A model API key, or Claude Code | `OPENAI_API_KEY` for `openai:` models, `ANTHROPIC_API_KEY` for `anthropic:` models. `claude-code:` models need no key; see Running on a Claude Code subscription |
 | Whatever the target's `test_command` needs | Cardinal runs that command in each worktree; for example, the live test repository needs Docker |
 
 ```sh
@@ -44,6 +44,24 @@ missing labels), that `test_command` is on `PATH`, and a key for every role's mo
 If a target's Docker builds hang with `DeadlineExceeded` on a `FROM` line, the Docker Desktop
 credential helper has stopped answering; see `lessons/docker-credential-helper-hang.md`.
 
+### Running on a Claude Code subscription
+
+A role whose model is `claude-code:<model>` (`opus`, `sonnet`, `haiku` or a full model ID) runs
+through the [Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk/overview) on the
+installed `claude` CLI, billed to its Pro or Max login instead of an API key. Log in once with
+`claude login`; for a service, put the token from `claude setup-token` in its environment as
+`CLAUDE_CODE_OAUTH_TOKEN`.
+
+The agent gets none of Claude Code's own tools, and reads no CLAUDE.md, settings or hooks from the
+host. Its file tools are Cardinal's mounts, served over MCP, so the sandbox below is the same.
+`ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are blanked for the CLI, and a session that still
+reports an API key source is stopped before its first turn
+(`lessons/subscription-backend-never-bills.md`). When the usage window is spent, or the CLI would
+use pay-as-you-go overage, the call waits for the window to reset and starts again: work slows
+down, but nothing fails or is billed. `repos check` makes one real call per model and prints the
+share of each window already used. Every parallel run draws on the same window, so keep
+`max_parallel_runs` at 1.
+
 ## Configuration
 
 Cardinal keeps everything under one home directory: `--home`, else `$CARDINAL_HOME`, else
@@ -56,7 +74,7 @@ commented example.
 
 | Section | Keys | Notes |
 |---|---|---|
-| `[models]` | `orchestrator`, `profiler`, `coder`, `verifier`, `pr_manager`, `deployer`, `monitor` | Required, each `provider:model` (e.g. `openai:gpt-6-sol`). No role borrows another's |
+| `[models]` | `orchestrator`, `profiler`, `coder`, `verifier`, `pr_manager`, `deployer`, `monitor` | Required, each `provider:model` (e.g. `openai:gpt-6-sol` or `claude-code:opus`). No role borrows another's |
 | | `scout`, `scout_reviewer` | Required only with `[scout]`. `scout` plans, surveys and writes repro tests; `scout_reviewer` judges each proposal |
 | `[logging]` | `level`, `source_repo` | Required. `source_repo` is where Cardinal files its own defects |
 | `[[repos]]` | `slug`, `base_branch`, `test_command`, `required_checks`, `paths_off_limits`, `paths_hidden` | Required, one table per repository. `test_command` is an argv list (no shell) and is the only test oracle. `required_checks = []` merges without waiting for CI. Agents cannot change `paths_off_limits`, and can neither see nor change `paths_hidden` (for example a grader kept in the repository) |

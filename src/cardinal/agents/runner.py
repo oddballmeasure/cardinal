@@ -1,6 +1,11 @@
-"""Run one Deep Agents call, record what it cost, and classify how it ended."""
+"""Run one agent call, record what it cost, and classify how it ended.
+
+A `claude-code:` spec runs on the Claude Code subscription (agents/claude_code.py); every other spec,
+and every call while CARDINAL_MODEL_PROVIDER is set, runs on Deep Agents.
+"""
 
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from importlib import resources
@@ -13,14 +18,24 @@ from langgraph.errors import GraphRecursionError
 from pydantic import ValidationError
 
 from cardinal.agents.backends import mounts
-from cardinal.agents.provider import resolve
+from cardinal.agents.provider import SUBSCRIPTION, resolve
 from cardinal.graph.failures import FailureKind, StageFailure
 from cardinal.store.db import now
 from cardinal.store.recorder import Recorder
 
 log = logging.getLogger(__name__)
 SKILLS = Path(str(resources.files("cardinal").joinpath("skills")))
-PROVIDER_MODULES = {"openai", "anthropic", "httpx", "httpcore", "google"}
+PROVIDER_MODULES = {"openai", "anthropic", "httpx", "httpcore", "google", "claude_agent_sdk"}
+
+
+@dataclass
+class Spend:
+    """What a call used, kept up to date while it runs so a failed call is still recorded."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    tools: list[str] = field(default_factory=list)
+    transcript: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -65,8 +80,8 @@ def classify(exc: BaseException) -> FailureKind:
     return FailureKind.CRASH
 
 
-def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_timeout: int):
-    """Returns the validated structured result (or the final state when there is no schema)."""
+def deep_agent(call: AgentCall, spend: Spend, recursion_limit: int, model_timeout: int):
+    """Returns the raw structured response (or the final state when there is no schema)."""
     model = resolve(call.model_spec, {**call.context, "stage": call.stage}, model_timeout)
     agent = create_deep_agent(
         model=model,
@@ -80,26 +95,50 @@ def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_t
         # checkpoints every step deadlocks LangGraph's writer pool on small machines (2 vCPU CI).
         checkpointer=False,
     )
+    # Stream values so the last state survives an exception and its spend is still recorded.
+    state: dict = {}
+    for state in agent.stream({"messages": [{"role": "user", "content": call.prompt}]},
+                              config={"recursion_limit": recursion_limit}, stream_mode="values"):
+        messages = state.get("messages", [])
+        (spend.input_tokens, spend.output_tokens), spend.tools = usage(messages), tool_names(messages)
+        spend.transcript = transcript(messages)
+    return state.get("structured_response") if call.schema else state
+
+
+def subscription(call: AgentCall, spend: Spend, recursion_limit: int, model_timeout: int):
+    """Waits out a spent usage window and repeats the call: the work is slower, never failed or billed."""
+    from cardinal.agents import claude_code  # noqa: PLC0415 - the SDK is slow to import and only this path needs it
+
+    while True:
+        try:
+            return claude_code.run(call, spend, recursion_limit, model_timeout, SKILLS)
+        except claude_code.UsageLimit as exc:
+            wait = max(exc.resets_at - time.time(), 0) + 60
+            log.warning("%s hit the subscription usage limit; waiting %ss", call.stage, round(wait),
+                        extra={"event": "usage_limit", "data": {"model": call.model_spec, "resets_at": exc.resets_at,
+                                                                "detail": str(exc)}})
+            time.sleep(wait)
+
+
+def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_timeout: int):
+    """Returns the validated structured result (or the final state when there is no schema)."""
+    engine = (subscription if call.model_spec.startswith(SUBSCRIPTION)
+              and not os.environ.get("CARDINAL_MODEL_PROVIDER") else deep_agent)
     started, clock = now(), time.monotonic()
-    state: dict = {"messages": []}
+    spend = Spend()
     outcome = "ok"
     try:
-        # Stream values so the last state survives an exception and its spend is still recorded.
-        for state in agent.stream({"messages": [{"role": "user", "content": call.prompt}]},
-                                  config={"recursion_limit": recursion_limit}, stream_mode="values"):
-            pass
+        raw = engine(call, spend, recursion_limit, model_timeout)
         if call.schema is None:
-            return state
-        raw = state.get("structured_response")
+            return raw
         if raw is None:
-            outcome = FailureKind.NO_ANSWER.value
             raise StageFailure(FailureKind.NO_ANSWER, f"{call.stage} stopped without returning {call.schema.__name__}")
         try:
             return call.schema.model_validate(raw) if not isinstance(raw, call.schema) else raw
         except ValidationError as exc:
-            outcome = FailureKind.INVALID_OUTPUT.value
             raise StageFailure(FailureKind.INVALID_OUTPUT, f"{call.stage}: {exc}") from exc
-    except StageFailure:
+    except StageFailure as exc:
+        outcome = exc.kind.value
         raise
     except Exception as exc:
         kind = classify(exc)
@@ -108,10 +147,10 @@ def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_t
                 extra={"event": "agent_call_failed", "failure_kind": kind.value, "data": {"model": call.model_spec}})
         raise StageFailure(kind, f"{call.stage}: {type(exc).__name__}: {str(exc)[:1500]}") from exc
     finally:
-        messages = state.get("messages", [])
+        tokens = (spend.input_tokens, spend.output_tokens)
         log.info("%s agent call ended %s", call.stage, outcome,
                  extra={"event": "agent_call", "data": {"model": call.model_spec, "ticket_id": call.ticket_id,
                                                          "seconds": round(time.monotonic() - clock, 2),
-                                                         "tokens": usage(messages), "outcome": outcome}})
+                                                         "tokens": tokens, "outcome": outcome}})
         recorder.agent_call(call.stage, call.ticket_id, started, time.monotonic() - clock,
-                            usage(messages), tool_names(messages), outcome, transcript(messages))
+                            tokens, spend.tools, outcome, spend.transcript)

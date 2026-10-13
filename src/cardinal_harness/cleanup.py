@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage
 
 from cardinal_harness.cleaner import CleanerService, GitHubCleanerAPI, LocalCleanerGitHub
 from cardinal_harness.contracts import CleanupRequest, Issue
+from cardinal_harness.github_setup import SUBSCRIPTION
 from cardinal_harness.product import ROOT, json_file
 
 STEPS = ["inspect_cleanup", "reset_remote", "close_managed_prs", "delete_managed_branches", "restore_issue", "verify_clean"]
@@ -40,7 +41,9 @@ def clean(work: Path, repo: Path, request: CleanupRequest, github, model_spec: s
     shutil.copytree(ROOT / "skills", work / "skills", dirs_exist_ok=True)
     json_file(work / "workspace" / "cleanup_request.json", request.model_dump())
     service = CleanerService(repo, request, github, artifact / "cleanup_events.json", artifact / "remote_state.json")
-    model = scripted_cleaner() if model_spec is None else init_chat_model(model_spec, timeout=180, max_retries=1)
+    # The cleaner's steps are fixed, so a subscription run uses the scripted cleaner and needs no API key.
+    scripted = model_spec is None or model_spec.startswith(SUBSCRIPTION)
+    model = scripted_cleaner() if scripted else init_chat_model(model_spec, timeout=180, max_retries=1)
     agent = create_deep_agent(model=model, backend=FilesystemBackend(root_dir=str(work), virtual_mode=True),
                               skills=["/skills/"], tools=service.tools())
     agent.invoke({"messages": [{"role": "user", "content": (

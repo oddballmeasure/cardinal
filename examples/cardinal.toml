@@ -13,6 +13,16 @@ deployer = "openai:gpt-6-sol"
 monitor = "openai:gpt-6-sol"        # writes issue text for grouped errors; code decides what is filed
 scout = "openai:gpt-6-sol"          # plans survey areas, surveys them, writes repro tests; needed with [scout]
 scout_reviewer = "openai:gpt-6-sol" # re-derives each proposal from the code; needed with [scout]
+# On a Claude Code subscription instead of an API key (README: Running on a Claude Code subscription):
+# orchestrator = "claude-code:opus"
+# profiler = "claude-code:sonnet"
+# coder = "claude-code:sonnet"
+# verifier = "claude-code:opus"
+# pr_manager = "claude-code:haiku"
+# deployer = "claude-code:haiku"
+# monitor = "claude-code:haiku"
+# scout = "claude-code:sonnet"
+# scout_reviewer = "claude-code:opus"
 
 # Every Cardinal process writes LogRecords to $CARDINAL_HOME/logs/YYYY-MM-DD.jsonl and store.db.
 [logging]
