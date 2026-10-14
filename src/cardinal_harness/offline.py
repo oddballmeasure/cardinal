@@ -93,7 +93,8 @@ def world(temp: Path, ready: list[int], ci: list[str] | None = None,
 
 def configure(temp: Path, bare: Path, state_path: Path, artifact: Path, required_checks: list[str] | None = None,
               env: dict[str, str] | None = None, max_parallel_runs: int | None = None,
-              limits: dict[str, int] | None = None, engine: str = "replay:scripted") -> Product:
+              limits: dict[str, int] | None = None, engine: str = "replay:scripted",
+              sections: dict[str, dict] | None = None) -> Product:
     """`engine` is every role's model spec. A `claude-code:` spec runs the real engine against the fake
     `claude` CLI: CARDINAL_MODEL_PROVIDER is left unset, since it would bypass that engine."""
     home = temp / "home"
@@ -102,7 +103,7 @@ def configure(temp: Path, bare: Path, state_path: Path, artifact: Path, required
                  slug=SLUG, remote_url=str(bare), test_command=[sys.executable, "-m", "pytest", "-q", "tests"],
                  required_checks=required_checks or [CHECK], paths_off_limits=[".github/"], deploy="local",
                  limits={"coder_attempts": 2, "ci_poll_seconds": 1, "ci_timeout_seconds": 120, **(limits or {})},
-                 max_parallel_runs=max_parallel_runs)
+                 max_parallel_runs=max_parallel_runs, sections=sections)
     fake_bin = fake_gh.install(temp / "bin")
     claude = {}
     if engine.startswith("claude-code:"):
@@ -1259,7 +1260,55 @@ def claude_code(temp: Path, artifact: Path) -> dict:
            and bool(fault) and "model" in events[0]["data"] and "detail" in events[0]["data"],
            {"events": events, "sessions": [item["time"] for item in sessions]})
     product.keep_store()
+    usage_ceiling(temp, artifact, checks)
     return {"checks": checks, "status": [run], "invocations": product.invocations}
+
+
+def product_records(product: Product, event: str) -> list[dict]:
+    return [item for path in sorted((product.home / "logs").glob("*.jsonl")) for line in path.read_text().splitlines()
+            for item in [json.loads(line)] if item.get("event") == event]
+
+
+def usage_ceiling(temp: Path, artifact: Path, checks: dict) -> None:
+    """The orchestrator's first session reports the five-hour window 60% used, resetting two seconds
+    ahead; later sessions report 10%. With [subscription] max_five_hour_utilization = 0.5 the session
+    stops, the call waits for the reset and succeeds; with no [subscription] the same script runs through."""
+    for name, sections in (("ceiling", {"subscription": {"max_five_hour_utilization": 0.5}}), ("no-ceiling", None)):
+        root = temp / f"usage-{name}"
+        root.mkdir()
+        bare, state_path, _ = world(root, ready=[19])
+        product = configure(root, bare, state_path, artifact / f"usage-{name}", engine="claude-code:fake-sonnet",
+                            env={"CARDINAL_FAKE_CLAUDE_HIGH_STAGE": "orchestrator"}, sections=sections)
+        code, result = product("run", "19")
+        records = fake_records(product)
+        fault = [item for item in records if item["event"] == "fault" and item["stage"] == "orchestrator"
+                 and item["kind"] == "high_usage"]
+        sessions = [item for item in records if item["event"] == "invocation" and item["stage"] == "orchestrator"]
+        stopped = {item["pid"] for item in fault}
+        ceilings, waits = product_records(product, "usage_ceiling"), product_records(product, "usage_limit")
+        resets_at = fault[0]["resets_at"] if fault else None
+        done = code == 0 and isinstance(result, dict) and result.get("status") == "done"
+        events = [event for event in product.status(19)[-1]["events"] if event["kind"] == "usage_limit"]
+        if name == "ceiling":
+            expect(checks, "ceiling: a session at 60% of the five-hour window stopped before any turn, waited, "
+                   "and the repeated call succeeded at 10%",
+                   done and len(fault) == 1 and len(sessions) == 1 and sessions[0]["pid"] not in stopped
+                   and not any(item["event"] in ("tool_call", "invocation") and item["pid"] in stopped for item in records)
+                   and len(waits) == 1 and waits[0]["data"]["resets_at"] == resets_at
+                   and len(events) == 1 and events[0]["stage"] == "orchestrator"
+                   and sessions[0]["time"] >= resets_at,
+                   {"result": result, "fault": fault, "sessions": sessions, "waits": waits, "events": events})
+            data = ceilings[0]["data"] if len(ceilings) == 1 else {}
+            expect(checks, "ceiling: a usage_ceiling record carries utilization, ceiling and the window's resetsAt",
+                   len(ceilings) == 1 and data.get("utilization") == 0.6 and data.get("ceiling") == 0.5
+                   and data.get("resets_at") == resets_at and data.get("model") == "claude-code:fake-sonnet"
+                   and data.get("stage") == "orchestrator" and ceilings[0].get("level") == "warning", ceilings)
+        else:
+            expect(checks, "no ceiling: the session reporting 60% ran straight through with no wait",
+                   done and len(fault) == 1 and len(sessions) == 1 and sessions[0]["pid"] in stopped
+                   and not ceilings and not waits and not events,
+                   {"result": result, "fault": fault, "sessions": sessions, "ceilings": ceilings, "waits": waits})
+        product.keep_store()
 
 
 def fake_records(product: Product) -> list[dict]:

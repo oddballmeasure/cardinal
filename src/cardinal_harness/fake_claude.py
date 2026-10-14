@@ -110,8 +110,10 @@ def prefix_items(node, path: str = "") -> list[str]:
 def scripted_fault(log: Path | None, stage: str) -> str | None:
     """A fault named for this stage by the environment, on the stage's first invocation only: the retry
     of the same call must find the CLI healthy. `api_key` reports an API-key session; `rate_limit` sends a
-    rejected rate-limit event whose window reopens in two seconds."""
-    for variable, kind in (("CARDINAL_FAKE_CLAUDE_API_KEY_STAGE", "api_key"), ("CARDINAL_FAKE_CLAUDE_LIMIT_STAGE", "rate_limit")):
+    rejected rate-limit event whose window reopens in two seconds; `high_usage` sends an allowed event
+    with the five-hour window 60% used, resetting in two seconds, and goes on if the engine does not stop."""
+    for variable, kind in (("CARDINAL_FAKE_CLAUDE_API_KEY_STAGE", "api_key"), ("CARDINAL_FAKE_CLAUDE_LIMIT_STAGE", "rate_limit"),
+                           ("CARDINAL_FAKE_CLAUDE_HIGH_STAGE", "high_usage")):
         if os.environ.get(variable) != stage or log is None:
             continue
         seen = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
@@ -336,20 +338,31 @@ def main(argv: list[str] | None = None) -> int:
     log = Path(os.environ["CARDINAL_FAKE_CLAUDE_LOG"]) if os.environ.get("CARDINAL_FAKE_CLAUDE_LOG") else None
     run = Session(channel, model, name.replace("-", "_").replace("deployment_manager", "deployer"), log)
     fault = scripted_fault(log, run.stage)
+    resets_at = time.time() + 2
     if fault:
-        run.record("fault", kind=fault)  # written first: the SDK may end this process as soon as it sees the fault
+        # Written first: the SDK may end this process as soon as it sees the fault.
+        run.record("fault", kind=fault, **({"resets_at": resets_at} if fault == "high_usage" else {}))
     channel.send({"type": "system", "subtype": "init", "cwd": os.getcwd(),
                   "apiKeySource": "ANTHROPIC_API_KEY" if fault == "api_key" else "none",
                   "session_id": SESSION, "tools": [], "mcp_servers": [{"name": SERVER, "status": "connected"}],
                   "model": model, "permissionMode": "default", "slash_commands": [], "output_style": "default"})
     if not fault and name != "probe" and os.environ.get("CARDINAL_FAKE_CLAUDE_QUIET_STAGE") != run.stage:
-        # What a subscription session reports: an allowed event for the five-hour window at 17% used.
+        # What a subscription session reports: an allowed event for the five-hour window at 17% used
+        # (10% once a high-usage stage is scripted, so the window has visibly fallen below any ceiling).
+        used = 0.1 if os.environ.get("CARDINAL_FAKE_CLAUDE_HIGH_STAGE") else 0.17
         channel.send({"type": "rate_limit_event", "uuid": "fake-rate-limit-allowed", "session_id": SESSION,
-                      "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour", "utilization": 0.17,
-                                          "unifiedWindows": {"five_hour": {"utilization": 0.17}}}})
+                      "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour", "utilization": used,
+                                          "unifiedWindows": {"five_hour": {"utilization": used}}}})
     if fault == "rate_limit":
         channel.send({"type": "rate_limit_event", "uuid": "fake-rate-limit", "session_id": SESSION,
-                      "rate_limit_info": {"status": "rejected", "resetsAt": time.time() + 2, "rateLimitType": "five_hour"}})
+                      "rate_limit_info": {"status": "rejected", "resetsAt": resets_at, "rateLimitType": "five_hour"}})
+    if fault == "high_usage":
+        channel.send({"type": "rate_limit_event", "uuid": "fake-rate-limit-high", "session_id": SESSION,
+                      "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour", "utilization": 0.6,
+                                          "unifiedWindows": {"five_hour": {"utilization": 0.6, "resetsAt": resets_at}}}})
+        if channel.closed.wait(3):
+            return 0  # stopped at the operator's ceiling
+        fault = None  # no ceiling: the session carries on as a healthy one
     if fault and channel.closed.wait(15):
         return 0  # the engine stopped the session, as it must, before any tool or result
     try:

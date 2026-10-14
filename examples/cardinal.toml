@@ -24,6 +24,12 @@ scout_reviewer = "openai:gpt-6-sol" # re-derives each proposal from the code; ne
 # scout = "claude-code:sonnet"
 # scout_reviewer = "claude-code:opus"
 
+# Optional, for claude-code: models, which share the subscription with your own Claude Code use. A session
+# that reports this share of the five-hour window or more stops and waits for the window to reset, leaving
+# the rest to you. Omit the section to run until the window is spent.
+# [subscription]
+# max_five_hour_utilization = 0.5   # 0 < x <= 1
+
 # Every Cardinal process writes LogRecords to $CARDINAL_HOME/logs/YYYY-MM-DD.jsonl and store.db.
 [logging]
 level = "info"                            # debug | info | warning | error | critical

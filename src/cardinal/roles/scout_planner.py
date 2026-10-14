@@ -38,7 +38,8 @@ def plan(run: ScoutRun, profile: RepoProfile, tracked: set[str]) -> list[Area]:
     limits = run.config.limits
     problem = ""
     for attempt in (1, 2):
-        result = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds)
+        result = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds,
+                           ceiling=run.config.ceiling)
         try:
             areas = validate(result, tracked, run.repo.paths_hidden)
         except ValueError as exc:

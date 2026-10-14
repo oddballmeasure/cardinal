@@ -41,7 +41,7 @@ def land(run: Run, verdict: Verdict) -> PRResult:
     )
     run.write_context("issue.json", run.issue.model_dump())
     try:
-        run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds)
+        run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds, ceiling=run.config.ceiling)
     finally:
         run.recorder.event("pr", "events", service.events)
     result = service.result()

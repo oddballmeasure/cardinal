@@ -49,7 +49,8 @@ def verify(run: Run, decision: IntakeDecision, base_sha: str, head_evidence: Com
         tools=[run_repo_tests_tool], schema=VerifierAssessment,
     )
     limits = run.config.limits
-    assessment: VerifierAssessment = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds)
+    assessment: VerifierAssessment = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds,
+                                               ceiling=run.config.ceiling)
     if head(run.worktree) != head_sha:
         raise RuntimeError("The branch head moved during verification")
     if head_evidence is None:
