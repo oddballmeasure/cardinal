@@ -155,10 +155,31 @@ def abandon(repo: Repo, db: sqlite3.Connection, claim: sqlite3.Row) -> dict:
 def interrupt(repo: Repo, db: sqlite3.Connection, run_id: str, number: int) -> None:
     """A daemon stop abandons this attempt, not the issue. Keep its worktree for the next
     fresh run to replace, and keep the claim until the ready label has been restored."""
+    if runs.is_settled(db, run_id):
+        finish_settled(repo, db, run_id, number)
+        return
     runs.update(db, run_id, status="interrupted", ended_at=now())
     Recorder(db, run_id).event("run", "interrupted", {})
     issues.set_state(repo.slug, number, repo.labels, repo.labels.ready)
     log.warning("run %s interrupted by daemon shutdown", run_id, extra={"event": "run_interrupted"})
+
+
+def finish_settled(repo: Repo, db: sqlite3.Connection, run_id: str, number: int) -> None:
+    """A stop landed after settle() recorded the outcome. The run row stays as settled; only the
+    label and comment settle() had not yet written are completed, never duplicated."""
+    row = runs.get(db, run_id)
+    labels = repo.labels
+    log.warning("run %s was stopped after it settled %s; finishing its label", run_id, row["status"],
+                extra={"event": "run_settled_then_stopped"})
+    if row["status"] == "done":
+        issues.set_state(repo.slug, number, labels, labels.done)
+        if not any(body.startswith("Cardinal resolved this") for body in issues.comment_bodies(repo.slug, number)):
+            issues.comment(repo.slug, number, f"Cardinal resolved this in {row['pr_url'] or 'its pull request'}"
+                           f" (merge `{(row['merge_sha'] or '')[:12]}`).")
+    elif row["status"] in ("awaiting_human", "rejected"):
+        issues.set_state(repo.slug, number, labels, labels.needs_human)
+    elif row["status"] == "failed":
+        issues.set_state(repo.slug, number, labels, labels.error)
 
 
 def drive(run: Run, thread_id: str, payload, *, daemon: bool = False) -> dict:

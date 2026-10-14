@@ -651,7 +651,64 @@ def daemon_restart(temp: Path, artifact: Path) -> dict:
                {"results": results, "issue": issue, "labels_added": labels_added})
         product.keep_store()
         json_file(artifact / name / "github_state.json", state)
+    settled_then_stopped(temp, artifact, checks)
     return {"checks": checks}
+
+
+def settled_then_stopped(temp: Path, artifact: Path, checks: dict) -> None:
+    """SIGTERM after the run settled `done` but before its `cardinal:done` label edit (held by the fake gh)
+    must leave the run done and the issue done, never interrupted or relabelled ready, and requeue nothing."""
+    name = "settled-sigterm"
+    root = temp / name
+    root.mkdir()
+    bare, state_path, _ = world(root, ready=[104])
+    marker = root / "edit-held"
+    state = json.loads(state_path.read_text())
+    state["gh_holds"] = [{"command": ["issue", "edit", "104"], "label": "cardinal:done", "seconds": 120,
+                          "marker": str(marker)}]
+    json_file(state_path, state)
+    product = configure(root, bare, state_path, artifact / name, max_parallel_runs=None)
+    command = [sys.executable, "-m", "cardinal.cli.main", "--home", str(product.home), "daemon", "--interval", "1"]
+    with (artifact / f"{name}-daemon.log").open("w") as log_file:
+        daemon_process = subprocess.Popen(command, env=product.env, start_new_session=True,
+                                          stdout=log_file, stderr=log_file)
+        try:
+            deadline = time.monotonic() + 300
+            while time.monotonic() < deadline and daemon_process.poll() is None and not marker.exists():
+                time.sleep(0.1)
+            held = marker.exists()
+            expect(checks, f"{name}: the daemon reached the held label edit after settling", held, str(marker))
+            daemon_process.send_signal(signal.SIGTERM)
+            try:
+                daemon_process.wait(timeout=90)
+            except subprocess.TimeoutExpired:
+                os.killpg(daemon_process.pid, signal.SIGKILL)
+                daemon_process.wait()
+        finally:
+            if daemon_process.poll() is None:
+                os.killpg(daemon_process.pid, signal.SIGKILL)
+                daemon_process.wait()
+    runs = product.status(104)
+    events = [(event["stage"], event["kind"]) for run in runs for event in run.get("events", [])]
+    state = json.loads(state_path.read_text())
+    issue = state["issues"]["104"]
+    ready_added = [call for call in state.get("calls", []) if call[:3] == ["issue", "edit", "104"]
+                   and "--add-label" in call and call[call.index("--add-label") + 1] == "cardinal:ready"]
+    expect(checks, f"{name}: the settled run stays done, the issue ends done and is not relabelled ready",
+           held and len(runs) == 1 and runs[0]["status"] == "done" and ("run", "settled") in events
+           and ("run", "interrupted") not in events and issue["state"] == "CLOSED"
+           and issue["labels"] == ["cardinal:done"] and not ready_added
+           and sum(comment.startswith("Cardinal resolved this") for comment in issue["comments"]) == 1,
+           {"runs": runs, "issue": issue, "ready_added": ready_added})
+    code, results = product("daemon", "--once", timeout=900)
+    state = json.loads(state_path.read_text())
+    issue = state["issues"]["104"]
+    expect(checks, f"{name}: the next poll starts nothing and changes nothing",
+           code == 0 and results == [] and len(product.status(104)) == 1 and product.status(104)[0]["status"] == "done"
+           and issue["labels"] == ["cardinal:done"] and issue["state"] == "CLOSED",
+           {"results": results, "issue": issue})
+    product.keep_store()
+    json_file(artifact / name / "github_state.json", state)
 
 
 def worker_killed(temp: Path, artifact: Path) -> dict:

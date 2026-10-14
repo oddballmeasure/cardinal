@@ -32,6 +32,12 @@ def latest(db: sqlite3.Connection, repo: str, issue: int) -> sqlite3.Row | None:
     ).fetchone()
 
 
+def is_settled(db: sqlite3.Connection, run_id: str) -> bool:
+    """True once settle() has recorded its `run settled` event for this run."""
+    return db.execute("SELECT 1 FROM events WHERE run_id = ? AND stage = 'run' AND kind = 'settled' LIMIT 1",
+                      (run_id,)).fetchone() is not None
+
+
 def get(db: sqlite3.Connection, run_id: str) -> sqlite3.Row:
     row = db.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
     if row is None:
