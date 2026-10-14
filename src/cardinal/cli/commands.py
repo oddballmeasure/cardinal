@@ -13,7 +13,7 @@ from cardinal.config.load import TEMPLATE, load
 from cardinal.daemon import loop
 from cardinal.github import issues
 from cardinal.github.gh import GhError, gh, gh_json
-from cardinal.home import Home
+from cardinal.home import SLUG, Home
 from cardinal.ingest import server
 from cardinal.logs import setup
 from cardinal.logs.record import LEVELS, LogRecord
@@ -109,6 +109,8 @@ def finish(result: dict) -> int:
 
 
 def init(home: Home, slug: str) -> dict:
+    if not SLUG.fullmatch(slug):
+        raise ValueError(f"Repository must be owner/name, got {slug!r}")
     home.root.mkdir(parents=True, exist_ok=True)
     if home.config.exists():
         raise ValueError(f"{home.config} already exists")
