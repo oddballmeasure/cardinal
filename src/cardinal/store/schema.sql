@@ -45,7 +45,10 @@ CREATE TABLE IF NOT EXISTS agent_calls (
     output_tokens INTEGER NOT NULL,
     tool_calls TEXT NOT NULL,
     outcome TEXT NOT NULL,
-    transcript TEXT NOT NULL
+    transcript TEXT NOT NULL,
+    model TEXT,                       -- the model that answered (claude-code only)
+    "window" TEXT,                      -- the subscription rate-limit window last reported, e.g. five_hour
+    utilization REAL                  -- that window's utilization, 0..1
 );
 
 -- INPUT. A profile costs model calls; losing it means paying again, so writes raise.

@@ -36,6 +36,9 @@ class Spend:
     output_tokens: int = 0
     tools: list[str] = field(default_factory=list)
     transcript: list[dict] = field(default_factory=list)
+    model: str | None = None  # the model that answered; claude-code only
+    window: str | None = None  # the latest rate-limit window reported; claude-code only
+    utilization: float | None = None
 
 
 @dataclass
@@ -153,4 +156,5 @@ def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_t
                                                          "seconds": round(time.monotonic() - clock, 2),
                                                          "tokens": tokens, "outcome": outcome}})
         recorder.agent_call(call.stage, call.ticket_id, started, time.monotonic() - clock,
-                            tokens, spend.tools, outcome, spend.transcript)
+                            tokens, spend.tools, outcome, spend.transcript,
+                            model=spend.model, window=spend.window, utilization=spend.utilization)

@@ -166,7 +166,28 @@ def role_tool(base, watch: Watch, cancel: anyio.CancelScope):
     return invoke
 
 
+def window_utilization(info, window: str | None) -> float | None:
+    """The window's utilization, from the parsed info or from the raw unifiedWindows ping() reads."""
+    value = getattr(info, "utilization", None)
+    raw = getattr(info, "raw", None) or {}
+    if value is None and window:
+        value = ((raw.get("unifiedWindows") or {}).get(window) or {}).get("utilization")
+    if value is None:
+        value = raw.get("utilization")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
 def record(message, spend: Spend) -> None:
+    if isinstance(message, SystemMessage) and message.subtype == "init":
+        spend.model = message.data.get("model") or spend.model
+    elif isinstance(message, RateLimitEvent):
+        info = message.rate_limit_info
+        window = getattr(info, "rate_limit_type", None)
+        if window:
+            spend.window = window
+            spend.utilization = window_utilization(info, window)
+    if isinstance(message, (AssistantMessage, ResultMessage)) and spend.model is None:
+        spend.model = getattr(message, "model", None) or None
     if isinstance(message, AssistantMessage):
         calls = [{"name": block.name.removeprefix(f"mcp__{SERVER}__"), "args": block.input, "id": block.id}
                  for block in message.content if isinstance(block, ToolUseBlock)]

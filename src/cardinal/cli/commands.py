@@ -188,9 +188,12 @@ def status(db, repo: str | None, issue: int | None, detail: bool):
                 {"at": event["at"], "stage": event["stage"], "kind": event["kind"], "data": json.loads(event["data"])}
                 for event in db.execute("SELECT * FROM events WHERE run_id = ? ORDER BY id", (row["run_id"],))
             ]
-            row["agent_calls"] = [dict(call) | {"transcript": None} for call in db.execute(
-                "SELECT stage, ticket_id, seconds, input_tokens, output_tokens, tool_calls, outcome, transcript"
-                " FROM agent_calls WHERE run_id = ? ORDER BY id", (row["run_id"],))]
+            row["agent_calls"] = [
+                {key: value for key, value in dict(call).items()
+                 if value is not None or key not in ("model", "window", "utilization")} | {"transcript": None}
+                for call in db.execute(
+                    "SELECT stage, ticket_id, seconds, input_tokens, output_tokens, tool_calls, outcome, transcript,"
+                    " model, \"window\", utilization FROM agent_calls WHERE run_id = ? ORDER BY id", (row["run_id"],))]
         return rows
     if not rows:
         print("No runs recorded.", file=sys.stderr)

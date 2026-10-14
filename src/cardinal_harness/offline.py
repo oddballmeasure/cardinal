@@ -157,6 +157,9 @@ def single(temp: Path, artifact: Path) -> dict:
            [event["data"]["ticket"] for event in run.get("events", []) if event["kind"] == "committed"]
            == ["ISSUE-104-DATE", "ISSUE-104-CSV"])
     expect(checks, "deployed revision is the merge", run.get("deployed_sha") == main, run.get("deployed_sha"))
+    expect(checks, "Deep Agents calls carry no window or utilization in status --json",
+           bool(run.get("agent_calls")) and not any("window" in call or "utilization" in call
+                                                    for call in run["agent_calls"]), run.get("agent_calls"))
     expect(checks, "issue closed and labelled done", state["issues"]["104"]["state"] == "CLOSED"
            and state["issues"]["104"]["labels"] == ["cardinal:done"], state["issues"]["104"])
     accepted = acceptance(bare, temp / "final", 104)
@@ -1041,7 +1044,8 @@ def claude_code(temp: Path, artifact: Path) -> dict:
     """README issue #19 end to end with every role on `claude-code:`: the real engine and SDK talk to a fake
     `claude` CLI over stream-json, and the fake drives each stage's tools through the SDK's MCP server."""
     bare, state_path, _ = world(temp, ready=[19])
-    product = configure(temp, bare, state_path, artifact, engine="claude-code:fake-sonnet")
+    product = configure(temp, bare, state_path, artifact, engine="claude-code:fake-sonnet",
+                        env={"CARDINAL_FAKE_CLAUDE_QUIET_STAGE": "profiler"})  # the profiler's session reports no rate limit
     checks: dict = {}
     base = git(bare, "rev-parse", "refs/heads/main")
     code, result = product("run", "19")
@@ -1073,6 +1077,14 @@ def claude_code(temp: Path, artifact: Path) -> dict:
            bool(recorded) and all(recorded.count(stage) == sum(item["stage"] == stage for item in calls)
                                   for stage in set(recorded)) and set(recorded) <= {item["stage"] for item in calls},
            {"recorded": recorded, "served": [item["stage"] for item in calls]})
+    reporting = [item for item in run["agent_calls"] if item["stage"] != "profiler"]
+    expect(checks, "status --json shows the answering model, window and utilization of each claude-code call",
+           bool(reporting) and all(item.get("model") == "fake-sonnet" and item.get("window") == "five_hour"
+                                   and item.get("utilization") == 0.17 for item in reporting), reporting)
+    quiet = [item for item in run["agent_calls"] if item["stage"] == "profiler"]
+    expect(checks, "a session with no RateLimitEvent shows no window or utilization key",
+           bool(quiet) and all("window" not in item and "utilization" not in item and item.get("model") == "fake-sonnet"
+                               for item in quiet), quiet)
     schemas = {item["stage"]: (item["json_schema"] or {}).get("title") for item in calls}
     expect(checks, "structured stages sent their output schema, others none",
            schemas.get("orchestrator") == "IntakeDecision" and schemas.get("profiler") == "ProfileChunk"

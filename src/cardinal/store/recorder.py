@@ -35,10 +35,13 @@ class Recorder:
 
     @safe
     def agent_call(self, stage: str, ticket_id: str | None, started_at: str, seconds: float,
-                   usage: tuple[int, int], tool_calls: list[str], outcome: str, transcript: list) -> None:
+                   usage: tuple[int, int], tool_calls: list[str], outcome: str, transcript: list, model: str | None = None,
+                   window: str | None = None, utilization: float | None = None) -> None:
         self.db.execute(
             "INSERT INTO agent_calls (run_id, stage, ticket_id, started_at, seconds, input_tokens,"
-            " output_tokens, tool_calls, outcome, transcript) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " output_tokens, tool_calls, outcome, transcript, model, \"window\", utilization)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (self.run_id, stage, ticket_id, started_at, seconds, usage[0], usage[1],
-             json.dumps(tool_calls), outcome, json.dumps(transcript, default=str, ensure_ascii=False)),
+             json.dumps(tool_calls), outcome, json.dumps(transcript, default=str, ensure_ascii=False),
+             model, window, utilization),
         )
