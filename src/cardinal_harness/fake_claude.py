@@ -9,7 +9,10 @@ control request to the SDK's in-process `cardinal` MCP server, with the assistan
 reasoning (like replay_provider); they are keyed on the stage named in the prompt ("Use the X skill").
 
 Every invocation appends to the JSONL file named by CARDINAL_FAKE_CLAUDE_LOG: the model, the stage, the
---json-schema it received, the MCP tool list it was served and each tool call it made.
+--json-schema it received, the MCP tool list it was served and each tool call it made, plus a `fault`
+record (written before anything else) when a scripted fault fires. CARDINAL_FAKE_CLAUDE_HIGH_STAGE names a
+stage whose first session reports the five-hour window 60% used, resetting two seconds ahead; every later
+stage session reports 10%, so a call stopped at an operator ceiling of 0.5 succeeds once it is retried.
 The product reaches this file through CARDINAL_CLAUDE_CLI_PATH (the SDK ships a bundled CLI and would
 otherwise ignore PATH). Only the standard library is used, so the stand-in starts fast.
 """

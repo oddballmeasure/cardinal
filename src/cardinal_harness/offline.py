@@ -1299,9 +1299,13 @@ def usage_ceiling(temp: Path, artifact: Path, checks: dict) -> None:
                    and sessions[0]["time"] >= resets_at,
                    {"result": result, "fault": fault, "sessions": sessions, "waits": waits, "events": events})
             data = ceilings[0]["data"] if len(ceilings) == 1 else {}
+            stamp = data.get("resets_at")
+            faulted = fault[0]["time"] if fault else None
             expect(checks, "ceiling: a usage_ceiling record carries utilization, ceiling and the window's resetsAt",
                    len(ceilings) == 1 and data.get("utilization") == 0.6 and data.get("ceiling") == 0.5
-                   and data.get("resets_at") == resets_at and data.get("model") == "claude-code:fake-sonnet"
+                   and isinstance(stamp, (int, float)) and not isinstance(stamp, bool)
+                   and faulted is not None and faulted < stamp < faulted + 30
+                   and stamp == resets_at and data.get("model") == "claude-code:fake-sonnet"
                    and data.get("stage") == "orchestrator" and ceilings[0].get("level") == "warning", ceilings)
         else:
             expect(checks, "no ceiling: the session reporting 60% ran straight through with no wait",
