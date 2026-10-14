@@ -324,9 +324,10 @@ def test_scout_proposes_checked_work_and_learns_from_outcomes():
     failing repro test; a fabricated quote, a duplicate, a reviewer refusal and an unreproduced bug
     are dropped; the cap holds the overflow; the daemon leaves proposals alone; approval and rejection
     are read back and the rejection reaches the next survey; in auto mode a bug with a track record
-    goes ready while a feature below its bars stays proposed; a held product decision goes to a person."""
+    goes ready while a feature below its bars stays proposed; a held product decision goes to a person.
+    Recorded test invocations show the full suite ran once per pass and each repro ran only its focused test."""
     report = harness("offline", "--scenario", "scout", timeout=900)
-    assert len(report["checks"]) == 26
+    assert len(report["checks"]) == 28
 
 
 def test_live_scout_stops_before_seeding_when_earlier_runs_left_issues_or_branches(tmp_path, monkeypatch):

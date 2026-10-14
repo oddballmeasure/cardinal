@@ -120,7 +120,7 @@ def model(context: dict):
         return Scripted(messages=iter([
             call("read_file", {"file_path": "/skills/scout-repro/SKILL.md"}, "skill"),
             call("write_file", {"file_path": f"/repo/{path}", "content": text}, "write"),
-            call("run_repo_tests", {}, "tests"),
+            call("run_repo_tests", {"test_path": path, "test_name": name}, "tests"),
             call("ReproResult", ReproResult(test_path=path, test_name=name, note="Replay test").model_dump(), "result"),
         ]))
     raise ValueError(f"No scout replay for stage {stage}")
