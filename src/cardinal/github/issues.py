@@ -44,6 +44,10 @@ def last_comment(repo: str, number: int) -> str:
     return comments[-1]["body"] if comments else ""
 
 
+def comment_bodies(repo: str, number: int) -> list[str]:
+    return [item["body"] for item in gh_json("issue", "view", str(number), "-R", repo, "--json", "comments")["comments"]]
+
+
 def set_state(repo: str, number: int, labels: Labels, target: str) -> None:
     if target not in labels.state_axis():
         raise ValueError(f"{target} is not a state label")

@@ -12,6 +12,9 @@ State lives in the JSON file named by CARDINAL_FAKE_GH_STATE:
   gh_failures: [{"command": ["issue", "edit"], "responses": [{"error": "GraphQL: ...", "after": true}]}]
   scripts CLI failures on matching command prefixes; `after` reports the error after applying the
   command (useful for testing ambiguous outcomes). Each response is consumed exactly once.
+  gh_holds: [{"command": ["issue", "edit", "104"], "label": "cardinal:done", "seconds": 60, "marker": "path"}]
+    holds the first matching `issue edit` adding `label` for `seconds`, after writing the marker file and
+    before applying it, so a scenario can signal the caller at that point. Consumed once.
   check_calls{sha: n}. With "scripts", the Nth distinct head checked follows the Nth script (the last
   repeats), so a repaired head can pass where the first failed. "also" names checks that pass on every
   PR head once the scripted one is listed. "log" is every failed job's log.
@@ -33,6 +36,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -274,6 +278,16 @@ def serve(path: Path) -> None:
     if failure and not failure.get("after"):
         path.write_text(json.dumps(state, indent=2))
         raise SystemExit(failure["error"])
+    hold = next((script for script in state.get("gh_holds", [])
+                 if script["seconds"] and args[:len(script["command"])] == script["command"]
+                 and script["label"] in (option(args, "--add-label") or "").split(",")), None)
+    if hold:
+        # Test-only gate on `issue edit` adding a label: consumed once, announced by a marker file, then
+        # held before the edit applies so a scenario can signal the caller at exactly this point.
+        seconds, hold["seconds"] = hold["seconds"], 0
+        path.write_text(json.dumps(state, indent=2))
+        Path(hold["marker"]).write_text("reached")
+        time.sleep(seconds)
     if args[:2] == ["auth", "status"]:
         result = "Logged in to github.invalid as fake"
     elif args[:2] == ["repo", "view"]:
