@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 from cardinal_harness import cleanup, fake_claude, fake_gh
@@ -1155,6 +1156,19 @@ def claude_code(temp: Path, artifact: Path) -> dict:
            and any(item["event"] == "fault" and item["stage"] == "orchestrator" and item["kind"] == "rate_limit" for item in records)
            and len(waits) == 1 and isinstance(waits[0]["data"]["resets_at"], (int, float)),
            {"result": result, "waits": waits, "sessions": len(sessions)})
+    events = [event for event in product.status(19)[-1]["events"] if event["kind"] == "usage_limit"]
+    fault = [item for item in records if item["event"] == "fault" and item["stage"] == "orchestrator"
+             and item["kind"] == "rate_limit"]
+    first = min((item["time"] for item in fault), default=None)  # the rejected session
+    retry = max((item["time"] for item in sessions), default=None)  # the repeated call, after the wait
+    stored = datetime.fromisoformat(events[0]["at"]).timestamp() if events else None
+    expect(checks, "status --json shows a usage_limit event with a numeric Unix resets_at, stored before the retry",
+           len(events) == 1 and events[0]["stage"] == "orchestrator"
+           and isinstance(events[0]["data"]["resets_at"], (int, float)) and not isinstance(events[0]["data"]["resets_at"], bool)
+           and first is not None and first < events[0]["data"]["resets_at"] < first + 30
+           and retry is not None and stored is not None and stored < retry - 30
+           and bool(fault) and "model" in events[0]["data"] and "detail" in events[0]["data"],
+           {"events": events, "sessions": [item["time"] for item in sessions]})
     product.keep_store()
     return {"checks": checks, "status": [run], "invocations": product.invocations}
 

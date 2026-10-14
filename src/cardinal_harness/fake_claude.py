@@ -174,7 +174,8 @@ class Session:
     def record(self, event: str, **data) -> None:
         if self.log is not None:
             with self.log.open("a") as handle:
-                handle.write(json.dumps({"event": event, "pid": os.getpid(), "stage": self.stage, **data}) + "\n")
+                handle.write(json.dumps({"event": event, "pid": os.getpid(), "stage": self.stage,
+                                   "time": time.time(), **data}) + "\n")
 
     def say(self, message: dict) -> None:
         self.channel.send({**message, "parent_tool_use_id": None, "session_id": SESSION})

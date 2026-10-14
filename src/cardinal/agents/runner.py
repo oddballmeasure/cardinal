@@ -108,7 +108,8 @@ def deep_agent(call: AgentCall, spend: Spend, recursion_limit: int, model_timeou
     return state.get("structured_response") if call.schema else state
 
 
-def subscription(call: AgentCall, spend: Spend, recursion_limit: int, model_timeout: int):
+def subscription(call: AgentCall, spend: Spend, recursion_limit: int, model_timeout: int,
+                 recorder: Recorder | None = None):
     """Waits out a spent usage window and repeats the call: the work is slower, never failed or billed."""
     from cardinal.agents import claude_code  # the SDK is slow to import; only this path needs it
 
@@ -120,13 +121,19 @@ def subscription(call: AgentCall, spend: Spend, recursion_limit: int, model_time
             log.warning("%s hit the subscription usage limit; waiting %ss", call.stage, round(wait),
                         extra={"event": "usage_limit", "data": {"model": call.model_spec, "resets_at": exc.resets_at,
                                                                 "detail": str(exc)}})
+            if recorder is not None:  # before sleeping, so a status query during the wait shows it
+                recorder.event(call.stage, "usage_limit", {"model": call.model_spec, "resets_at": exc.resets_at,
+                                                           "detail": str(exc)})
             time.sleep(wait)
 
 
 def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_timeout: int):
     """Returns the validated structured result (or the final state when there is no schema)."""
-    engine = (subscription if call.model_spec.startswith(SUBSCRIPTION)
-              and not os.environ.get("CARDINAL_MODEL_PROVIDER") else deep_agent)
+    if call.model_spec.startswith(SUBSCRIPTION) and not os.environ.get("CARDINAL_MODEL_PROVIDER"):
+        def engine(*args):
+            return subscription(*args, recorder=recorder)
+    else:
+        engine = deep_agent
     started, clock = now(), time.monotonic()
     spend = Spend()
     outcome = "ok"

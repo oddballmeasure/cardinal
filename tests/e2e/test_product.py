@@ -110,7 +110,7 @@ def test_claude_code_engine_runs_an_issue_end_to_end_against_a_fake_claude_cli()
     the fake `claude` CLI answers the stream-json control protocol and drives each stage's tools through
     the SDK's in-process MCP server. The README issue merges, closes and deploys."""
     report = harness("offline", "--scenario", "claude-code", timeout=1500)  # one retry waits out runner.subscription's +60s
-    assert len(report["checks"]) == 17
+    assert len(report["checks"]) == 18
 
 
 def test_store_from_before_usage_columns_is_migrated_on_open_without_losing_rows(tmp_path):
