@@ -154,6 +154,25 @@ def test_subscription_ceiling_is_validated_when_the_config_loads(tmp_path):
         assert "subscription" in error, (section, error)
 
 
+def test_processes_opening_a_new_store_at_once_all_succeed(tmp_path):
+    """A daemon and the `status` polls watching it may all be the first to open a home's store: each
+    switches it to WAL and creates its tables, and none may fail with "database is locked"."""
+    import subprocess
+
+    home = tmp_path / "cardinal-home"
+    base = [sys.executable, "-m", "cardinal.cli.main", "--home", str(home)]
+    init = run_bounded([*base, "init", "--repo", "team/app"], timeout=30, cwd=ROOT)
+    assert init.returncode == 0, init.stderr
+    for round_number in range(3):
+        for name in ("store.db", "store.db-wal", "store.db-shm"):
+            (home / name).unlink(missing_ok=True)
+        processes = [subprocess.Popen([*base, "status", "--json"], cwd=ROOT, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(8)]
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=120)
+            assert process.returncode == 0 and json.loads(stdout) == [], (round_number, stderr[-3000:])
+
+
 def test_store_from_before_usage_columns_is_migrated_on_open_without_losing_rows(tmp_path):
     home = tmp_path / "cardinal-home"
     home.mkdir()
