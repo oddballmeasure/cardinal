@@ -58,7 +58,11 @@ host. Its file tools are Cardinal's mounts, served over MCP, so the sandbox belo
 reports an API key source is stopped before its first turn
 (`lessons/subscription-backend-never-bills.md`). When the usage window is spent, or the CLI would
 use pay-as-you-go overage, the call waits for the window to reset and starts again: work slows
-down, but nothing fails or is billed. `repos check` makes one real call per model and prints the
+down, but nothing fails or is billed. To leave part of the five-hour window for your own use, set
+`[subscription] max_five_hour_utilization` (for example `0.5`): a session that reports that share of
+the window or more stops before its next turn, logs a `usage_ceiling` event with `utilization`,
+`ceiling` and `resets_at`, and waits for the window to reset in the same way. It applies to every
+`claude-code:` call: daemon runs, `scout` and `monitor`. `repos check` makes one real call per model and prints the
 share of each window already used. Every parallel run draws on the same window, so keep
 `max_parallel_runs` at 1.
 
@@ -82,6 +86,7 @@ commented example.
 | `[repos.labels]` | `ready`, `working`, `done`, `error`, `needs_human`, `investigate`, `proposed` | Optional renames of the `cardinal:*` labels |
 | `[repos.deploy]` | `transport`, `local_directory` | Optional. `local` or `ssh`; see Deployment |
 | `[limits]` | `recursion_limit`, `coder_attempts`, `verify_rounds`, `ci_repair_rounds`, `base_sync_rounds`, `test_timeout_seconds`, `ci_timeout_seconds`, `ci_poll_seconds`, `model_timeout_seconds` | Optional; defaults are in `examples/cardinal.toml` |
+| `[subscription]` | `max_five_hour_utilization` | Optional, `0 < x <= 1`. `claude-code:` sessions at or above this share of the five-hour window stop and wait for it to reset; see Running on a Claude Code subscription |
 | `[ingest]` | `bind`, `token_env` | Optional; enables `cardinal ingest` |
 | `[monitor]` | `min_occurrences`, `window_hours`, `max_issues_per_pass` | Optional; enables `cardinal monitor` |
 | `[scout]` | `autonomy`, `categories`, `areas_per_pass`, `cooldown_days`, `max_proposals_per_pass`, `max_files`, `repro`, `auto_min_decided`, `auto_min_approval`, `auto_min_done` | Optional; enables `cardinal scout`. Every key is required; see Finding work |

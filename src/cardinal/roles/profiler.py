@@ -112,7 +112,8 @@ def profile_batch(run: Run, repo: Path, batch: list[str], number: int, total: in
         tools=[read_repo_file], schema=ProfileChunk,
     )
     for attempt in (1, 2):
-        chunk = run_agent(call, run.recorder, run.config.limits.recursion_limit, run.config.limits.model_timeout_seconds)
+        chunk = run_agent(call, run.recorder, run.config.limits.recursion_limit, run.config.limits.model_timeout_seconds,
+                          ceiling=run.config.ceiling)
         described = sorted(entry.path for entry in chunk.files)
         if described == sorted(batch) and read_paths == set(batch):
             return chunk.files

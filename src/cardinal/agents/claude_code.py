@@ -8,6 +8,7 @@ session that still reports one is stopped before its first turn.
 """
 
 import functools
+import logging
 import os
 import time
 from contextlib import aclosing
@@ -25,6 +26,7 @@ from cardinal.agents.provider import SUBSCRIPTION
 from cardinal.agents.runner import Spend
 from cardinal.graph.failures import FailureKind, StageFailure
 
+log = logging.getLogger(__name__)
 SERVER = "cardinal"
 # Either variable makes the CLI bill the API instead of the subscription; an empty value disables it.
 BILLING_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
@@ -233,7 +235,8 @@ def options(call, model: str, tools: list, max_turns: int, skills: Path, stderr:
     )
 
 
-async def session(call, model: str, max_turns: int, timeout: int, skills: Path, spend: Spend, stderr: list[str]):
+async def session(call, model: str, max_turns: int, timeout: int, skills: Path, spend: Spend, stderr: list[str],
+                  ceiling: float | None = None):
     watch = Watch()
     result: ResultMessage | None = None
     async with anyio.create_task_group() as group:
@@ -258,7 +261,7 @@ async def session(call, model: str, max_turns: int, timeout: int, skills: Path, 
                 if isinstance(message, ResultMessage):
                     result = message
                 # Kept, not raised: an exception inside the task group would leave it as an ExceptionGroup.
-                watch.error = stop(message, call.stage)
+                watch.error = stop(message, call.stage, ceiling, call.model_spec)
                 if watch.error is not None:
                     break
         group.cancel_scope.cancel()
@@ -267,8 +270,41 @@ async def session(call, model: str, max_turns: int, timeout: int, skills: Path, 
     return result
 
 
-def stop(message, stage: str) -> Exception | None:
-    """Why the session must end now: it would bill the API, or the subscription's window is spent."""
+def five_hour(info) -> tuple[float | None, float | None]:
+    """The five-hour window's utilization and reset time, from unifiedWindows or, when the event is about
+    that window, from the parsed info."""
+    raw = getattr(info, "raw", None) or {}
+    window = (raw.get("unifiedWindows") or {}).get("five_hour") or {}
+    value = window.get("utilization")
+    if not isinstance(value, (int, float)) and getattr(info, "rate_limit_type", None) == "five_hour":
+        value = window_utilization(info, "five_hour")
+    resets = window.get("resetsAt")
+    if not isinstance(resets, (int, float)):
+        resets = getattr(info, "resets_at", None)
+    return (float(value) if isinstance(value, (int, float)) else None,
+            float(resets) if isinstance(resets, (int, float)) else None)
+
+
+def over_ceiling(message, stage: str, ceiling: float | None, model: str | None) -> UsageLimit | None:
+    """The operator's ceiling on the five-hour window: at or above it the session stops and waits, leaving
+    the rest of the window to the operator."""
+    if ceiling is None or not isinstance(message, RateLimitEvent):
+        return None
+    utilization, resets_at = five_hour(message.rate_limit_info)
+    if utilization is None or utilization < ceiling:
+        return None
+    resets_at = resets_at or time.time() + LIMIT_RETRY_SECONDS
+    log.warning("%s stopped at %s%% of the five-hour window, above the %s%% ceiling", stage,
+                round(utilization * 100), round(ceiling * 100),
+                extra={"event": "usage_ceiling", "data": {"utilization": utilization, "ceiling": ceiling,
+                                                          "resets_at": resets_at, "model": model, "stage": stage}})
+    return UsageLimit(resets_at, f"{stage}: five_hour utilization {utilization:.2f} is at or above the "
+                                 f"ceiling {ceiling:.2f}")
+
+
+def stop(message, stage: str, ceiling: float | None = None, model: str | None = None) -> Exception | None:
+    """Why the session must end now: it would bill the API, the subscription's window is spent, or the
+    five-hour window has reached the operator's ceiling."""
     if isinstance(message, SystemMessage) and message.subtype == "init":
         source = message.data.get("apiKeySource")
         if source != SUBSCRIPTION_SOURCE:
@@ -281,16 +317,16 @@ def stop(message, stage: str) -> Exception | None:
             state = "overage" if info.raw.get("isUsingOverage") else info.status
             return UsageLimit(info.resets_at or time.time() + LIMIT_RETRY_SECONDS,
                               f"{stage}: {info.rate_limit_type} usage limit {state}")
-    return None
+    return over_ceiling(message, stage, ceiling, model)
 
 
-def run(call, spend: Spend, recursion_limit: int, timeout: int, skills: Path):
+def run(call, spend: Spend, recursion_limit: int, timeout: int, skills: Path, ceiling: float | None = None):
     """Returns the raw structured output (or the final text when there is no schema)."""
     stderr: list[str] = []
     try:
         # LangGraph counts about two steps per tool turn, so the same limit bounds both engines alike.
         result = anyio.run(session, call, model_name(call.model_spec), max(recursion_limit // 2, 10), timeout, skills,
-                           spend, stderr)
+                           spend, stderr, ceiling)
     except BaseExceptionGroup as group:  # the session's task group wraps whatever ended it
         failure = group.exceptions[0] if len(group.exceptions) == 1 else group
         if isinstance(failure, ClaudeSDKError):  # the CLI itself failed; its stderr says why
@@ -308,7 +344,7 @@ def run(call, spend: Spend, recursion_limit: int, timeout: int, skills: Path):
     return result.structured_output if call.schema else result.result
 
 
-async def ping(model: str) -> str:
+async def ping(model: str, ceiling: float | None = None) -> str:
     seen = {}
     opts = ClaudeAgentOptions(model=model, system_prompt="Reply with the single word ok.", tools=[],
                               strict_mcp_config=True, setting_sources=[], max_turns=1,
@@ -325,13 +361,17 @@ async def ping(model: str) -> str:
             if isinstance(message, ResultMessage) and message.is_error:
                 raise ValueError(f"Claude Code probe failed: {message.result}")
     used = ", ".join(f"{name} {round(item.get('utilization', 0) * 100)}%" for name, item in seen.get("window", {}).items())
-    return f"subscription {seen.get('model')}" + (f" ({used} used)" if used else "")
+    usage = [f"{used} used"] if used else []
+    if ceiling is not None:  # the operator's [subscription] ceiling on the five-hour window
+        usage.append(f"ceiling {round(ceiling * 100)}%")
+    return f"subscription {seen.get('model')}" + (f" ({', '.join(usage)})" if usage else "")
 
 
 @functools.cache
-def probe(spec: str) -> str:
-    """One one-turn call per model proving it answers on the subscription, never on an API key."""
+def probe(spec: str, ceiling: float | None = None) -> str:
+    """One one-turn call per model proving it answers on the subscription, never on an API key. The
+    ceiling is part of the cache key, so a cached line always shows the ceiling it was asked about."""
     try:
-        return anyio.run(ping, model_name(spec))
+        return anyio.run(ping, model_name(spec), ceiling)
     except ClaudeSDKError as exc:
         raise ValueError(f"Claude Code is unavailable: {exc}") from exc

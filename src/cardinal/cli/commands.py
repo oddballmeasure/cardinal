@@ -141,7 +141,7 @@ def check_result(home: Home, config, repo) -> dict:
     probe("labels", lambda: issues.ensure_labels(repo.slug, repo.labels))
     probe("test command", lambda: _executable(repo.test_command[0]))
     for role, spec in config.models.model_dump(exclude_none=True).items():
-        probe(f"model {role}", lambda spec=spec: _model_key(spec))
+        probe(f"model {role}", lambda spec=spec: _model_key(spec, config.ceiling))
     failed = any(value.startswith("FAILED") for value in results.values())
     return {"repo": repo.slug, "checks": results, "ok": not failed}
 
@@ -160,12 +160,12 @@ def _executable(name: str) -> str:
     return found
 
 
-def _model_key(spec: str) -> str:
+def _model_key(spec: str, ceiling: float | None = None) -> str:
     if os.environ.get("CARDINAL_MODEL_PROVIDER"):
         return "model provider hook set"
     if spec.startswith(SUBSCRIPTION):
         from cardinal.agents import claude_code  # the SDK is slow to import; only this probe needs it
-        return claude_code.probe(spec)
+        return claude_code.probe(spec, ceiling)
     provider = spec.partition(":")[0]
     key = PROVIDER_KEYS.get(provider)
     if key is None:

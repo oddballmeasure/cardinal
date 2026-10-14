@@ -17,6 +17,7 @@ def survey(run: ScoutRun, area: Area) -> ScoutFindings:
         schema=ScoutFindings,
     )
     limits = run.config.limits
-    findings = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds)
+    findings = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds,
+                         ceiling=run.config.ceiling)
     run.recorder.event("scout", "findings", {"area": area.name, "proposals": [item.title for item in findings.proposals]})
     return findings

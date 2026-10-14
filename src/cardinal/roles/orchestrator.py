@@ -84,7 +84,8 @@ def intake(run: Run, profile: RepoProfile, human_answer: str | None) -> tuple[In
     limits = run.config.limits
     problem = ""
     for attempt in (1, 2):
-        decision = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds)
+        decision = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds,
+                             ceiling=run.config.ceiling)
         try:
             tickets = validate(decision, run, profile, queried)
         except ValueError as exc:

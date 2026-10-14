@@ -45,7 +45,8 @@ def reproduce(run: ScoutRun, proposal: Proposal, base_sha: str, base_green: bool
                     "/context/proposal.json, run it with run_repo_tests, and return one ReproResult."),
             tools=[run_repo_tests_tool], schema=ReproResult,
         )
-        result: ReproResult = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds)
+        result: ReproResult = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds,
+                                         ceiling=run.config.ceiling)
         changed = [path for path in changed_files(worktree, base_sha) if not vendored(path)]
         if not changed:
             return Repro(False, False, "the repro wrote no test")

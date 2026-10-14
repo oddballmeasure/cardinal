@@ -40,5 +40,5 @@ def attempt(run: Run, decision: IntakeDecision, ticket: Ticket, number: int, fee
         tools=[run_repo_tests_tool],
     )
     limits = run.config.limits
-    run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds)
+    run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds, ceiling=run.config.ceiling)
     return runs

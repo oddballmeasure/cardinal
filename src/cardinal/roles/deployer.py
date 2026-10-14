@@ -32,7 +32,8 @@ def deploy(run: Run, merge_sha: str) -> DeploymentResult:
         tools=service.tools(),
     )
     limits = run.config.limits
-    run_agent(call, run.recorder, max(limits.recursion_limit, service.max_polls * 6), limits.model_timeout_seconds)
+    run_agent(call, run.recorder, max(limits.recursion_limit, service.max_polls * 6), limits.model_timeout_seconds,
+              ceiling=run.config.ceiling)
     run.recorder.event("deploy", "events", service.events)
     if service.violations:
         raise StageFailure(FailureKind.DEPLOY, f"Deployment tools misused: {service.violations}")

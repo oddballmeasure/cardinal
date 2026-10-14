@@ -73,6 +73,13 @@ class Monitor(Strict):
     max_issues_per_pass: int = Field(ge=1, le=20, description="Caps an error storm, including the monitor's own")
 
 
+class Subscription(Strict):
+    """Operator limits on `claude-code:` models, which share the operator's own Claude Code subscription."""
+
+    max_five_hour_utilization: float = Field(gt=0, le=1, description=(
+        "A session reporting this share of the five-hour window or more stops and waits for the window to reset"))
+
+
 class Scout(Strict):
     """`cardinal scout`: find, review and propose work. Every key is a decision; none defaults."""
 
@@ -117,8 +124,14 @@ class Config(Strict):
     ingest: Ingest | None = None
     monitor: Monitor | None = None
     scout: Scout | None = None
+    subscription: Subscription | None = None
     limits: Limits = Limits()
     repos: list[Repo] = Field(min_length=1)
+
+    @property
+    def ceiling(self) -> float | None:
+        """The five-hour utilization at which `claude-code:` sessions stop; None when unset."""
+        return self.subscription.max_five_hour_utilization if self.subscription else None
 
     @model_validator(mode="after")
     def scout_models(self) -> "Config":

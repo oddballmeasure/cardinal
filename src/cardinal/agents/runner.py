@@ -124,13 +124,14 @@ def deep_agent(call: AgentCall, spend: Spend, recursion_limit: int, model_timeou
 
 
 def subscription(call: AgentCall, spend: Spend, recursion_limit: int, model_timeout: int,
-                 recorder: Recorder | None = None):
-    """Waits out a spent usage window and repeats the call: the work is slower, never failed or billed."""
+                 recorder: Recorder | None = None, ceiling: float | None = None):
+    """Waits out a spent usage window, or one at the operator's ceiling, and repeats the call: the work is
+    slower, never failed or billed."""
     from cardinal.agents import claude_code  # the SDK is slow to import; only this path needs it
 
     while True:
         try:
-            return claude_code.run(call, spend, recursion_limit, model_timeout, SKILLS)
+            return claude_code.run(call, spend, recursion_limit, model_timeout, SKILLS, ceiling)
         except claude_code.UsageLimit as exc:
             wait = max(exc.resets_at - time.time(), 0) + 60
             log.warning("%s hit the subscription usage limit; waiting %ss", call.stage, round(wait),
@@ -142,11 +143,13 @@ def subscription(call: AgentCall, spend: Spend, recursion_limit: int, model_time
             time.sleep(wait)
 
 
-def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_timeout: int):
-    """Returns the validated structured result (or the final state when there is no schema)."""
+def run_agent(call: AgentCall, recorder: Recorder, recursion_limit: int, model_timeout: int,
+              ceiling: float | None = None):
+    """Returns the validated structured result (or the final state when there is no schema). `ceiling` is
+    the configured [subscription] max_five_hour_utilization; it applies only to `claude-code:` calls."""
     if call.model_spec.startswith(SUBSCRIPTION) and not os.environ.get("CARDINAL_MODEL_PROVIDER"):
         def engine(*args):
-            return subscription(*args, recorder=recorder)
+            return subscription(*args, recorder=recorder, ceiling=ceiling)
     else:
         engine = deep_agent
     started, clock = now(), time.monotonic()

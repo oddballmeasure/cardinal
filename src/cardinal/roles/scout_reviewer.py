@@ -16,6 +16,7 @@ def review(run: ScoutRun, proposal: Proposal) -> ProposalReview:
         schema=ProposalReview,
     )
     limits = run.config.limits
-    result = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds)
+    result = run_agent(call, run.recorder, limits.recursion_limit, limits.model_timeout_seconds,
+                       ceiling=run.config.ceiling)
     run.recorder.event("scout", "review", {"title": proposal.title, "verdict": result.verdict, "reason": result.reason})
     return result

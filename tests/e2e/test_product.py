@@ -113,9 +113,64 @@ def test_documentation_only_merges_without_tests_but_code_and_unmet_requirements
 def test_claude_code_engine_runs_an_issue_end_to_end_against_a_fake_claude_cli():
     """Every role is `claude-code:` and CARDINAL_MODEL_PROVIDER is unset, so the real engine and SDK run:
     the fake `claude` CLI answers the stream-json control protocol and drives each stage's tools through
-    the SDK's in-process MCP server. The README issue merges, closes and deploys."""
-    report = harness("offline", "--scenario", "claude-code", timeout=1500)  # one retry waits out runner.subscription's +60s
-    assert len(report["checks"]) == 18
+    the SDK's in-process MCP server. The README issue merges, closes and deploys. A session reporting the
+    five-hour window above [subscription] max_five_hour_utilization waits for its reset; with no
+    [subscription] the same report runs straight through."""
+    # Two retries each wait out runner.subscription's +60s.
+    report = harness("offline", "--scenario", "claude-code", timeout=2400)
+    assert len(report["checks"]) == 23
+    assert {"ceiling: a usage_ceiling record carries utilization, ceiling and the window's resetsAt",
+            "no ceiling: the session reporting 60% ran straight through with no wait",
+            "ceiling: repos check shows the probe's window usage with the ceiling",
+            "no-ceiling: repos check shows the probe's window usage and no ceiling"} <= set(report["checks"])
+
+
+def test_subscription_ceiling_is_validated_when_the_config_loads(tmp_path):
+    """[subscription] max_five_hour_utilization must be 0 < x <= 1 and the section refuses other keys;
+    a config without the section loads as before."""
+    home = tmp_path / "cardinal-home"
+    base = [sys.executable, "-m", "cardinal.cli.main", "--home", str(home)]
+    init = run_bounded([*base, "init", "--repo", "team/app"], timeout=30, cwd=ROOT)
+    assert init.returncode == 0, init.stderr
+    config = home / "cardinal.toml"
+    template = config.read_text()
+
+    def status(section: str):
+        config.write_text(template + section)
+        return run_bounded([*base, "status", "--json"], timeout=30, cwd=ROOT)
+
+    for section in ("", "\n[subscription]\nmax_five_hour_utilization = 0.5\n",
+                    "\n[subscription]\nmax_five_hour_utilization = 1\n"):
+        shown = status(section)
+        assert shown.returncode == 0 and json.loads(shown.stdout) == [], (section, shown.stderr)
+    for section in ("\n[subscription]\nmax_five_hour_utilization = 0\n",
+                    "\n[subscription]\nmax_five_hour_utilization = -0.2\n",
+                    "\n[subscription]\nmax_five_hour_utilization = 1.5\n",
+                    "\n[subscription]\nmax_five_hour_utilization = 0.5\nmax_weekly_utilization = 0.5\n",
+                    "\n[subscription]\n"):
+        refused = status(section)
+        assert refused.returncode == 2 and refused.stdout == "", (section, refused.stdout)
+        error = json.loads(refused.stderr.strip().splitlines()[-1])["error"]
+        assert "subscription" in error, (section, error)
+
+
+def test_processes_opening_a_new_store_at_once_all_succeed(tmp_path):
+    """A daemon and the `status` polls watching it may all be the first to open a home's store: each
+    switches it to WAL and creates its tables, and none may fail with "database is locked"."""
+    import subprocess
+
+    home = tmp_path / "cardinal-home"
+    base = [sys.executable, "-m", "cardinal.cli.main", "--home", str(home)]
+    init = run_bounded([*base, "init", "--repo", "team/app"], timeout=30, cwd=ROOT)
+    assert init.returncode == 0, init.stderr
+    for round_number in range(3):
+        for name in ("store.db", "store.db-wal", "store.db-shm"):
+            (home / name).unlink(missing_ok=True)
+        processes = [subprocess.Popen([*base, "status", "--json"], cwd=ROOT, text=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE) for _ in range(8)]
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=120)
+            assert process.returncode == 0 and json.loads(stdout) == [], (round_number, stderr[-3000:])
 
 
 def test_store_from_before_usage_columns_is_migrated_on_open_without_losing_rows(tmp_path):

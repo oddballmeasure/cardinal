@@ -48,7 +48,8 @@ def draft(home: Home, config: Config, db: sqlite3.Connection, group: Group) -> I
                      prompt="Use the monitor skill. Read /context/finding.json and return one IssueDraft.",
                      schema=IssueDraft)
     limits = config.limits
-    return run_agent(call, Recorder(db, call_id), limits.recursion_limit, limits.model_timeout_seconds)
+    return run_agent(call, Recorder(db, call_id), limits.recursion_limit, limits.model_timeout_seconds,
+                     ceiling=config.ceiling)
 
 
 def file(home: Home, config: Config, db: sqlite3.Connection, group: Group) -> dict:
