@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from cardinal.agents.backends import mounts
 from cardinal.agents.provider import SUBSCRIPTION, resolve
+from cardinal.github.gh import GhError
 from cardinal.graph.failures import FailureKind, StageFailure
 from cardinal.store.db import now
 from cardinal.store.recorder import Recorder
@@ -75,11 +76,25 @@ def transcript(messages: list) -> list[dict]:
              "tool_calls": getattr(message, "tool_calls", None)} for message in messages]
 
 
+def github_error(exc: BaseException | None, seen: set[int] | None = None) -> bool:
+    """Whether a GhError is this exception, its cause or context, or a member of an exception group."""
+    seen = set() if seen is None else seen
+    if exc is None or id(exc) in seen:
+        return False
+    seen.add(id(exc))
+    if isinstance(exc, GhError):
+        return True
+    members = getattr(exc, "exceptions", None) or ()
+    return any(github_error(item, seen) for item in (exc.__cause__, exc.__context__, *members))
+
+
 def classify(exc: BaseException) -> FailureKind:
     if isinstance(exc, GraphRecursionError):
         return FailureKind.TURNS
     if type(exc).__module__.split(".")[0] in PROVIDER_MODULES:
         return FailureKind.PROVIDER
+    if github_error(exc):
+        return FailureKind.GITHUB
     return FailureKind.CRASH
 
 

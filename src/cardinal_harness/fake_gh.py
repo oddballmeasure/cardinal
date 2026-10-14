@@ -274,7 +274,8 @@ def serve(path: Path) -> None:
     log = state.setdefault("calls", [])
     log.append(sys.argv[1:])
     failure = next((script["responses"].pop(0) for script in state.get("gh_failures", [])
-                    if script["responses"] and args[:len(script["command"])] == script["command"]), None)
+                    if script["responses"] and args[:len(script["command"])] == script["command"]
+                      and script.get("contains", "") in " ".join(args)), None)
     if failure and not failure.get("after"):
         path.write_text(json.dumps(state, indent=2))
         raise SystemExit(failure["error"])
