@@ -160,6 +160,22 @@ among landed issues) at or above `auto_min_approval` and `auto_min_done`, and, f
 test. The issue says why. Anything short of that is proposed, so a falling rate returns a category
 to propose-only by itself.
 
+**Running it daily.** Serve mode (no `--once`) repeats every `--interval` seconds counted from
+process start, so it drifts. To pass at a fixed time instead, set `at = "HH:MM"` in `[scout]`
+(host-local time, 24-hour, validated). Serve mode then logs `scout_next_pass` with the ISO time of
+the next pass, sleeps until it, and runs one pass each day. A failed pass is logged and the next
+day's still runs. `at` cannot be combined with `--interval`; the scout refuses to start with both.
+
+`examples/cardinal-scout@.service` is a commented systemd template that runs serve mode for one
+repository. The instance name is the slug with `/` written as `--`; the schedule comes from
+`[scout] at`, not from systemd. Edit `User` and `WorkingDirectory`, then:
+
+```sh
+sudo cp examples/cardinal-scout@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cardinal-scout@owner--repo.service   # runs owner/repo
+```
+
 ## Running
 
 ```sh
