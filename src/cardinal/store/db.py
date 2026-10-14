@@ -19,14 +19,16 @@ def connect(path: Path) -> sqlite3.Connection:
 
 def migrate(connection: sqlite3.Connection) -> None:
     """Columns added after a table first shipped; CREATE TABLE IF NOT EXISTS leaves old tables as they were."""
-    have = {row["name"] for row in connection.execute("PRAGMA table_info(claims)")}
-    for column, kind in (("host", "TEXT"), ("pid", "INTEGER")):
-        if column not in have:
-            try:
-                connection.execute(f"ALTER TABLE claims ADD COLUMN {column} {kind}")
-            except sqlite3.OperationalError as exc:  # another process added it first
-                if "duplicate column" not in str(exc):
-                    raise
+    for table, columns in (("claims", (("host", "TEXT"), ("pid", "INTEGER"))),
+                           ("agent_calls", (("model", "TEXT"), ("window", "TEXT"), ("utilization", "REAL")))):
+        have = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        for column, kind in columns:
+            if column not in have:
+                try:
+                    connection.execute(f"ALTER TABLE {table} ADD COLUMN \"{column}\" {kind}")
+                except sqlite3.OperationalError as exc:  # another process added it first
+                    if "duplicate column" not in str(exc):
+                        raise
 
 
 def now() -> str:

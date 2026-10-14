@@ -38,7 +38,7 @@ def test_two_dependent_tickets_wait_for_ci_merge_deploy_and_pass_acceptance():
     """The lead scenario: one issue, two ordered tickets, CI missing→pending→success, merge,
     a deploy whose health turns ready only on the second poll, then the hidden acceptance tests."""
     report = harness("offline", "--scenario", "single", timeout=900)
-    assert len(report["checks"]) == 10
+    assert len(report["checks"]) == 11
 
 
 def test_coder_recovers_from_file_tool_refusals_and_completes_cli_issue():
@@ -110,7 +110,34 @@ def test_claude_code_engine_runs_an_issue_end_to_end_against_a_fake_claude_cli()
     the fake `claude` CLI answers the stream-json control protocol and drives each stage's tools through
     the SDK's in-process MCP server. The README issue merges, closes and deploys."""
     report = harness("offline", "--scenario", "claude-code", timeout=1500)  # one retry waits out runner.subscription's +60s
-    assert len(report["checks"]) == 15
+    assert len(report["checks"]) == 18
+
+
+def test_store_from_before_usage_columns_is_migrated_on_open_without_losing_rows(tmp_path):
+    home = tmp_path / "cardinal-home"
+    home.mkdir()
+    with sqlite3.connect(home / "store.db") as db:  # agent_calls as it was before model/window/utilization
+        db.execute("CREATE TABLE agent_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL,"
+                   " stage TEXT NOT NULL, ticket_id TEXT, started_at TEXT NOT NULL, seconds REAL NOT NULL,"
+                   " input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, tool_calls TEXT NOT NULL,"
+                   " outcome TEXT NOT NULL, transcript TEXT NOT NULL)")
+        db.execute("INSERT INTO agent_calls (run_id, stage, started_at, seconds, input_tokens, output_tokens,"
+                   " tool_calls, outcome, transcript) VALUES ('old', 'coder', '2025-01-01T00:00:00+00:00', 1.5,"
+                   " 3, 4, '[]', 'ok', '[]')")
+    base = [sys.executable, "-m", "cardinal.cli.main", "--home", str(home)]
+    init = run_bounded([*base, "init", "--repo", "team/app"], timeout=30, cwd=ROOT)
+    assert init.returncode == 0, init.stderr
+    with sqlite3.connect(home / "store.db") as db:
+        db.execute("INSERT INTO runs (run_id, thread_id, repo, issue, status, started_at)"
+                   " VALUES ('old', 't', 'team/app', 7, 'done', '2025-01-01T00:00:00+00:00')")
+        columns = {row[1] for row in db.execute("PRAGMA table_info(agent_calls)")}
+    assert {"model", "window", "utilization"} <= columns
+    for _ in range(2):  # opening it again must not fail
+        shown = run_bounded([*base, "status", "7", "--json"], timeout=30, cwd=ROOT)
+        assert shown.returncode == 0, shown.stderr
+        calls = json.loads(shown.stdout)[0]["agent_calls"]
+        assert len(calls) == 1 and calls[0]["stage"] == "coder" and calls[0]["input_tokens"] == 3
+        assert not {"model", "window", "utilization"} & set(calls[0])
 
 
 def test_parallel_workers_plan_one_at_a_time_and_land_sibling_merges():

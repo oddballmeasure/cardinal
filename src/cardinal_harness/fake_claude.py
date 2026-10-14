@@ -174,7 +174,8 @@ class Session:
     def record(self, event: str, **data) -> None:
         if self.log is not None:
             with self.log.open("a") as handle:
-                handle.write(json.dumps({"event": event, "pid": os.getpid(), "stage": self.stage, **data}) + "\n")
+                handle.write(json.dumps({"event": event, "pid": os.getpid(), "stage": self.stage,
+                                   "time": time.time(), **data}) + "\n")
 
     def say(self, message: dict) -> None:
         self.channel.send({**message, "parent_tool_use_id": None, "session_id": SESSION})
@@ -341,6 +342,11 @@ def main(argv: list[str] | None = None) -> int:
                   "apiKeySource": "ANTHROPIC_API_KEY" if fault == "api_key" else "none",
                   "session_id": SESSION, "tools": [], "mcp_servers": [{"name": SERVER, "status": "connected"}],
                   "model": model, "permissionMode": "default", "slash_commands": [], "output_style": "default"})
+    if not fault and name != "probe" and os.environ.get("CARDINAL_FAKE_CLAUDE_QUIET_STAGE") != run.stage:
+        # What a subscription session reports: an allowed event for the five-hour window at 17% used.
+        channel.send({"type": "rate_limit_event", "uuid": "fake-rate-limit-allowed", "session_id": SESSION,
+                      "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour", "utilization": 0.17,
+                                          "unifiedWindows": {"five_hour": {"utilization": 0.17}}}})
     if fault == "rate_limit":
         channel.send({"type": "rate_limit_event", "uuid": "fake-rate-limit", "session_id": SESSION,
                       "rate_limit_info": {"status": "rejected", "resetsAt": time.time() + 2, "rateLimitType": "five_hour"}})
