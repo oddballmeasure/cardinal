@@ -67,7 +67,7 @@ def parser() -> argparse.ArgumentParser:
     scout.add_argument("action", nargs="?", choices=["status"], help="status: track record and gate per category")
     scout.add_argument("--repo")
     scout.add_argument("--once", action="store_true", help="Run one pass, then exit")
-    scout.add_argument("--interval", type=int, default=86400)
+    scout.add_argument("--interval", type=int, default=None, help="Seconds between passes (default 86400; not with [scout] at)")
     return root
 
 

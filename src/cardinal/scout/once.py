@@ -14,6 +14,7 @@ import sqlite3
 import time
 import uuid
 from collections import Counter
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from cardinal.agents.backends import under
@@ -37,6 +38,7 @@ from cardinal.store.recorder import Recorder
 
 log = logging.getLogger(__name__)
 WINDOW_DAYS = outcomes.WINDOW_DAYS
+DEFAULT_INTERVAL = 86400
 DOCS = {".md", ".rst", ".txt", ".adoc"}
 
 
@@ -212,10 +214,35 @@ def once(home: Home, config: Config, db: sqlite3.Connection, repo: Repo) -> dict
             return {"pass_id": pass_id, "repo": repo.slug, "failure": {"kind": kind.value, "detail": str(exc)[:500]}}
 
 
-def serve(home: Home, config: Config, db: sqlite3.Connection, repo: Repo, interval: int) -> None:
+def next_at(at: str, after: datetime | None = None) -> datetime:
+    """The next host-local occurrence of HH:MM strictly after `after`: today if still ahead, else tomorrow."""
+    current = (after or datetime.now()).astimezone().replace(tzinfo=None)
+    hour, minute = (int(part) for part in at.split(":"))
+    target = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= current:
+        target += timedelta(days=1)
+    return target.astimezone()  # naive local time -> aware, following the host's DST rules
+
+
+def serve(home: Home, config: Config, db: sqlite3.Connection, repo: Repo, interval: int = DEFAULT_INTERVAL,
+          at: str | None = None) -> None:
+    """Run passes forever: daily at host-local `at` when set, else every `interval` seconds. No failure ends it."""
     while True:
-        once(home, config, db, repo)  # never raises; a failed pass is recorded and logged
-        time.sleep(interval)
+        if at is not None:
+            when = next_at(at)
+            delay = max(0.0, (when - datetime.now().astimezone()).total_seconds())
+        else:
+            delay = interval
+            when = datetime.now().astimezone() + timedelta(seconds=interval)
+        log.info("next scout pass at %s", when.isoformat(),
+                 extra={"event": "scout_next_pass", "data": {"at": when.isoformat()}})
+        time.sleep(delay)
+        try:
+            once(home, config, db, repo)  # records and logs its own failures
+        except Exception as exc:  # noqa: BLE001 - nothing that escapes a pass may end the loop
+            kind = failure_kind(exc)
+            log.log(kind.level, "scout pass crashed", exc_info=exc,
+                    extra={"event": "scout_pass_failed", "failure_kind": kind.value})
 
 
 def status(config: Config, db: sqlite3.Connection, repo: Repo) -> dict:
