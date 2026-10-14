@@ -192,6 +192,62 @@ def test_scout_proposes_checked_work_and_learns_from_outcomes():
     assert len(report["checks"]) == 26
 
 
+def test_live_scout_stops_before_seeding_when_earlier_runs_left_issues_or_branches(tmp_path, monkeypatch):
+    """Fake gh over a bare remote holds an open proposed issue, a needs-human one, and a scout-seed branch:
+    live-scout reports them with their cleanup commands and neither pushes nor edits anything."""
+    import subprocess
+
+    from cardinal_harness import fake_gh, live_scout
+    from cardinal_harness.offline import world
+
+    suite = json.loads((ROOT / json.loads(live_scout.FIXTURE.read_text())["suite"]).read_text())
+    bare, state_path, state = world(tmp_path, ready=[])
+    run_id = "feedc0ffee12"
+    subprocess.run(["git", "--git-dir", str(bare), "branch", f"scout-seed-{run_id}", "main"], check=True)
+    state["repository"] = suite["repository"]
+    state["issues"] = {
+        "40": {"number": 40, "title": "returns uses instead of count", "body": "", "state": "OPEN",
+               "labels": ["cardinal:proposed"], "comments": []},
+        "41": {"number": 41, "title": "needs a person", "body": "", "state": "OPEN",
+               "labels": ["cardinal:needs-human"], "comments": []},
+        "42": {"number": 42, "title": "closed one", "body": "", "state": "CLOSED",
+               "labels": ["cardinal:proposed"], "comments": []},
+        "43": {"number": 43, "title": "unrelated", "body": "", "state": "OPEN", "labels": [], "comments": []},
+    }
+    state_path.write_text(json.dumps(state))
+    monkeypatch.setenv("PATH", f"{fake_gh.install(tmp_path / 'bin').parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("CARDINAL_FAKE_GH_STATE", str(state_path))
+    monkeypatch.setattr(live_scout, "use_github_cli_git_credentials", lambda: None)
+
+    def refs() -> str:
+        return subprocess.run(["git", "--git-dir", str(bare), "for-each-ref"], text=True, capture_output=True,
+                              check=True).stdout
+
+    refs_before, issues_before = refs(), json.loads(state_path.read_text())["issues"]
+    artifact = tmp_path / "artifact"
+    artifact.mkdir()
+    report = live_scout.run_locked("claude-code:sonnet", artifact, False, remote_url=str(bare))
+
+    assert report["passed"] is False and not report["checks"] and "cleanup" not in report
+    leftovers = report["preflight_leftovers"]
+    assert sorted(item["number"] for item in leftovers["issues"]) == [40, 41]
+    assert leftovers["branches"] == [f"scout-seed-{run_id}"]
+    assert live_scout.CLEANUP.format(run_id=run_id) in leftovers["commands"]
+    assert any("#40" in command for command in leftovers["commands"])
+    after = json.loads(state_path.read_text())
+    assert after["issues"] == issues_before and refs() == refs_before
+    assert all(call[:2] == ["issue", "list"] for call in after["calls"]), after["calls"]
+    assert not (artifact / live_scout.MANIFEST).exists()
+
+    # Without leftovers the preflight finds nothing, and the run would go on to seed.
+    subprocess.run(["git", "--git-dir", str(bare), "branch", "-D", f"scout-seed-{run_id}"], check=True,
+                   capture_output=True)
+    for issue in after["issues"].values():
+        issue["state"] = "CLOSED"
+    state_path.write_text(json.dumps(after))
+    assert live_scout.preflight(suite["repository"], str(bare)) is None
+
+
 def logs_cli(home: Path, *args: str):
     return run_bounded([sys.executable, "-m", "cardinal.cli.main", "--home", str(home), "logs", *args],
                        timeout=30, cwd=ROOT)
