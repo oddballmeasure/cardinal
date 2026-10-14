@@ -13,13 +13,17 @@ landing as done.
 
 import json
 import os
+import signal
 import sqlite3
+import subprocess
 import sys
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from cardinal_harness import fake_gh, scout_replay
 from cardinal_harness.offline import SLUG, expect, world
-from cardinal_harness.product import Product, json_file, product_env, write_config
+from cardinal_harness.product import Product, json_file, product_env, run_bounded, write_config
 
 ROLES = ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor", "scout", "scout_reviewer")
 SCOUT = {"autonomy": "propose", "categories": ["bug", "feature"], "areas_per_pass": 2, "cooldown_days": 7,
@@ -164,6 +168,68 @@ def scenario(temp: Path, artifact: Path) -> dict:
            and categories.get("feature", {}).get("rejected") == 1 and categories.get("feature", {}).get("gate") == "proposed",
            status)
 
+    serve_checks(product, bare, checks, artifact, (third or {}).get("pass_id") if isinstance(third, dict) else None)
+
     product.keep_store()
     json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
     return {"checks": checks, "invocations": product.invocations}
+
+
+def cli(product: Product, *args: str, timeout: int = 60):
+    command = [sys.executable, "-m", "cardinal.cli.main", "--home", str(product.home), *args]
+    return run_bounded(command, timeout, env=product.env)
+
+
+def next_pass_times(product: Product) -> list[str]:
+    result = cli(product, "logs", "query")
+    records = [json.loads(line)["record"] for line in result.stdout.splitlines() if line.strip()]
+    return [record["data"]["at"] for record in records if record.get("event") == "scout_next_pass"]
+
+
+def serve_checks(product: Product, bare: Path, checks: dict, artifact: Path, previous: str | None) -> None:
+    """Daily schedule: bad `at` and `at` with --interval are refused; serve mode logs the next pass, runs
+    one at that time, and stops on SIGTERM."""
+    write(product.home, bare, {**SCOUT, "at": "25:00"})
+    refused = cli(product, "scout", "--once", "--repo", SLUG)
+    expect(checks, "an `at` outside 00:00-23:59 is refused when the config loads",
+           refused.returncode != 0 and "at" in refused.stderr, refused.stderr[-500:])
+
+    target = (datetime.now() + timedelta(minutes=2)).replace(second=0, microsecond=0)
+    write(product.home, bare, {**SCOUT, "at": target.strftime("%H:%M")})
+    both = cli(product, "scout", "--repo", SLUG, "--interval", "60")
+    expect(checks, "`at` together with --interval is refused, naming both",
+           both.returncode != 0 and "at" in both.stderr and "--interval" in both.stderr, both.stderr[-500:])
+
+    known = len(next_pass_times(product))
+    command = [sys.executable, "-m", "cardinal.cli.main", "--home", str(product.home), "-v", "scout", "--repo", SLUG]
+    with (artifact / "scout-serve.log").open("w") as output:
+        process = subprocess.Popen(command, env=product.env, start_new_session=True, stdout=output, stderr=output)
+        try:
+            deadline = time.monotonic() + 300
+            scheduled: list[str] = []
+            while time.monotonic() < deadline and process.poll() is None and not scheduled:
+                scheduled = next_pass_times(product)[known:]
+                time.sleep(0.5)
+            logged = datetime.fromisoformat(scheduled[0]) if scheduled else None
+            expect(checks, "serve mode logs scout_next_pass with the next host-local HH:MM before sleeping",
+                   logged is not None and logged.replace(tzinfo=None) == target, scheduled)
+            finished: dict = {}
+            while time.monotonic() < deadline and process.poll() is None:
+                code, status = product("scout", "status", "--repo", SLUG)
+                last = (status or {}).get("last_pass") if isinstance(status, dict) else None
+                if last and last["pass_id"] != previous and last.get("ended_at"):
+                    finished = last
+                    break
+                time.sleep(2)
+            expect(checks, "one pass runs at that time and completes", bool(finished) and not finished.get("failure_kind"),
+                   finished)
+        finally:
+            if process.poll() is None:
+                process.send_signal(signal.SIGTERM)
+                try:
+                    process.wait(timeout=60)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+    expect(checks, "the serve process stops on SIGTERM", process.poll() == 128 + signal.SIGTERM,
+           process.returncode)

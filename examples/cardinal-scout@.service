@@ -1,0 +1,43 @@
+# Template unit: one scout serve loop per repository.
+# The instance name is the repository slug with "/" written as "--", e.g.
+#   cardinal-scout@oddballmeasure--cardinal.service  ->  oddballmeasure/cardinal
+#
+# Install: copy this file to /etc/systemd/system/ (or ~/.config/systemd/user/ with `systemctl --user`),
+# edit User, WorkingDirectory and the cardinal path below, then:
+#   systemctl daemon-reload
+#   systemctl enable --now cardinal-scout@owner--repo.service
+#
+# The schedule does NOT come from systemd. The scout runs in serve mode (no --once) and reads
+# `at = "HH:MM"` from the [scout] section of cardinal.toml (host-local, 24-hour). It logs
+# scout_next_pass, sleeps until that time, runs one pass, and repeats each day.
+# Do not pass --interval here: it cannot be combined with `at` and the scout refuses to start.
+
+# Describes the unit; %i is the instance name (the slug with "--").
+[Unit]
+Description=Cardinal scout (daily pass, schedule from [scout] at in cardinal.toml) for %i
+# Start only once the network is up, since the scout talks to GitHub and the model provider.
+After=network-online.target
+# Pull the network-online target in with this unit.
+Wants=network-online.target
+
+# How the process runs.
+[Service]
+# A plain long-running process: the serve loop never exits on its own.
+Type=simple
+# The account that owns the Cardinal home (cardinal.toml, store, credentials). Change it.
+User=cardinal
+# The checkout of Cardinal that `uv run` uses. Change it.
+WorkingDirectory=/opt/cardinal
+# Serve mode for one repository: `cardinal scout --repo <slug>`, with no --once and no --interval.
+# bash turns the instance (%i, "owner--repo") back into the slug ("owner/repo") with ${1//--//};
+# "$$" is systemd's escape for a literal "$". The pass time is [scout] at in cardinal.toml.
+ExecStart=/bin/bash -c 'exec uv run --locked cardinal scout --repo "$${1//--//}"' cardinal-scout %i
+# A failed pass is logged and the loop continues; restart only if the process itself dies.
+Restart=on-failure
+# Wait before restarting, so a crash loop does not hammer GitHub.
+RestartSec=60
+
+# Start at boot when enabled.
+[Install]
+# Bring the scout up with the normal multi-user system.
+WantedBy=multi-user.target
