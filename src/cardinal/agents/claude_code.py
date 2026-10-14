@@ -344,7 +344,7 @@ def run(call, spend: Spend, recursion_limit: int, timeout: int, skills: Path, ce
     return result.structured_output if call.schema else result.result
 
 
-async def ping(model: str) -> str:
+async def ping(model: str, ceiling: float | None = None) -> str:
     seen = {}
     opts = ClaudeAgentOptions(model=model, system_prompt="Reply with the single word ok.", tools=[],
                               strict_mcp_config=True, setting_sources=[], max_turns=1,
@@ -361,13 +361,17 @@ async def ping(model: str) -> str:
             if isinstance(message, ResultMessage) and message.is_error:
                 raise ValueError(f"Claude Code probe failed: {message.result}")
     used = ", ".join(f"{name} {round(item.get('utilization', 0) * 100)}%" for name, item in seen.get("window", {}).items())
-    return f"subscription {seen.get('model')}" + (f" ({used} used)" if used else "")
+    usage = [f"{used} used"] if used else []
+    if ceiling is not None:  # the operator's [subscription] ceiling on the five-hour window
+        usage.append(f"ceiling {round(ceiling * 100)}%")
+    return f"subscription {seen.get('model')}" + (f" ({', '.join(usage)})" if usage else "")
 
 
 @functools.cache
-def probe(spec: str) -> str:
-    """One one-turn call per model proving it answers on the subscription, never on an API key."""
+def probe(spec: str, ceiling: float | None = None) -> str:
+    """One one-turn call per model proving it answers on the subscription, never on an API key. The
+    ceiling is part of the cache key, so a cached line always shows the ceiling it was asked about."""
     try:
-        return anyio.run(ping, model_name(spec))
+        return anyio.run(ping, model_name(spec), ceiling)
     except ClaudeSDKError as exc:
         raise ValueError(f"Claude Code is unavailable: {exc}") from exc

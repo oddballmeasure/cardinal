@@ -1308,6 +1308,16 @@ def usage_ceiling(temp: Path, artifact: Path, checks: dict) -> None:
                    done and len(fault) == 1 and len(sessions) == 1 and sessions[0]["pid"] in stopped
                    and not ceilings and not waits and not events,
                    {"result": result, "fault": fault, "sessions": sessions, "ceilings": ceilings, "waits": waits})
+        # `repos check` probes each model once; the fake CLI's probe reports the five-hour window at 17%.
+        code, checked = product("repos", "check", "--repo", SLUG)
+        models = {key: value for key, value in (checked.get("checks") or {}).items()
+                  if key.startswith("model ")} if isinstance(checked, dict) else {}
+        shown = "five_hour 17% used, ceiling 50%" if name == "ceiling" else "five_hour 17% used"
+        expect(checks, f"{name}: repos check shows the probe's window usage"
+               + (" with the ceiling" if name == "ceiling" else " and no ceiling"),
+               bool(models) and all(value.startswith("ok subscription fake-sonnet") and f"({shown})" in value
+                                    and (name == "ceiling" or "ceiling" not in value) for value in models.values()),
+               checked)
         product.keep_store()
 
 

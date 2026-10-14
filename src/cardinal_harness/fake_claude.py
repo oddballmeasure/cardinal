@@ -346,10 +346,11 @@ def main(argv: list[str] | None = None) -> int:
                   "apiKeySource": "ANTHROPIC_API_KEY" if fault == "api_key" else "none",
                   "session_id": SESSION, "tools": [], "mcp_servers": [{"name": SERVER, "status": "connected"}],
                   "model": model, "permissionMode": "default", "slash_commands": [], "output_style": "default"})
-    if not fault and name != "probe" and os.environ.get("CARDINAL_FAKE_CLAUDE_QUIET_STAGE") != run.stage:
+    if not fault and os.environ.get("CARDINAL_FAKE_CLAUDE_QUIET_STAGE") != run.stage:
         # What a subscription session reports: an allowed event for the five-hour window at 17% used
-        # (10% once a high-usage stage is scripted, so the window has visibly fallen below any ceiling).
-        used = 0.1 if os.environ.get("CARDINAL_FAKE_CLAUDE_HIGH_STAGE") else 0.17
+        # (10% for stage sessions once a high-usage stage is scripted, so the window has visibly fallen
+        # below any ceiling; `repos check`'s probe always sees 17%).
+        used = 0.1 if os.environ.get("CARDINAL_FAKE_CLAUDE_HIGH_STAGE") and name != "probe" else 0.17
         channel.send({"type": "rate_limit_event", "uuid": "fake-rate-limit-allowed", "session_id": SESSION,
                       "rate_limit_info": {"status": "allowed", "rateLimitType": "five_hour", "utilization": used,
                                           "unifiedWindows": {"five_hour": {"utilization": used}}}})

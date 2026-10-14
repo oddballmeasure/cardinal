@@ -118,9 +118,11 @@ def test_claude_code_engine_runs_an_issue_end_to_end_against_a_fake_claude_cli()
     [subscription] the same report runs straight through."""
     # Two retries each wait out runner.subscription's +60s.
     report = harness("offline", "--scenario", "claude-code", timeout=2400)
-    assert len(report["checks"]) == 21
+    assert len(report["checks"]) == 23
     assert {"ceiling: a usage_ceiling record carries utilization, ceiling and the window's resetsAt",
-            "no ceiling: the session reporting 60% ran straight through with no wait"} <= set(report["checks"])
+            "no ceiling: the session reporting 60% ran straight through with no wait",
+            "ceiling: repos check shows the probe's window usage with the ceiling",
+            "no-ceiling: repos check shows the probe's window usage and no ceiling"} <= set(report["checks"])
 
 
 def test_subscription_ceiling_is_validated_when_the_config_loads(tmp_path):
