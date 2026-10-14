@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 import signal
 import subprocess
 from pathlib import Path
@@ -38,6 +39,19 @@ def run_repo_tests(worktree: Path, command: list[str], timeout: int) -> CommandE
             stdout, stderr = process.communicate()
         return CommandEvidence(command=command, exit_code=124, timed_out=True,
                                stdout_tail=tail(stdout or ""), stderr_tail=tail((stderr or "") + f"\nkilled after {timeout}s"))
+
+
+def focused_command(command: list[str], test_path: str, test_name: str) -> list[str]:
+    """Fill a focused_test_command's {test_path} and {test_name} in each argv element."""
+    return [argument.replace("{test_path}", test_path).replace("{test_name}", test_name) for argument in command]
+
+
+# pytest exits 5 when it collects nothing; these lines mean the same from it or other runners.
+NO_TESTS = re.compile(r"no tests ran|collected 0 items|no tests collected|error: not found:|no tests found", re.IGNORECASE)
+
+
+def ran_no_tests(evidence: CommandEvidence) -> bool:
+    return evidence.exit_code == 5 or bool(NO_TESTS.search(evidence.stdout_tail + "\n" + evidence.stderr_tail))
 
 
 def summary(evidence: CommandEvidence) -> str:

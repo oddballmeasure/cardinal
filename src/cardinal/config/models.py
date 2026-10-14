@@ -1,10 +1,14 @@
 """Operator configuration. Unknown keys and missing decisions refuse rather than default open."""
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cardinal.home import SLUG
+
+PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
+FOCUSED_PLACEHOLDERS = {"test_path", "test_name"}
 
 
 class Strict(BaseModel):
@@ -102,6 +106,9 @@ class Repo(Strict):
     remote_url: str | None = Field(default=None, description="Defaults to https://github.com/<slug>")
     base_branch: str = Field(min_length=1)
     test_command: list[str] = Field(min_length=1, description="argv run in the worktree; no shell")
+    focused_test_command: list[str] | None = Field(default=None, description=(
+        "argv that runs one test, with {test_path} and/or {test_name} filled in; only scout repros use it. "
+        "test_command stays the oracle for base-green, coder, verifier and CI"))
     required_checks: list[str] = Field(description="CI check names that must pass on the exact head; [] means none")
     paths_off_limits: list[str] = Field(description="Path prefixes agents may not change")
     paths_hidden: list[str] = Field(description="Path prefixes agents may not see or change, such as a grader")
@@ -112,6 +119,22 @@ class Repo(Strict):
     max_parallel_runs: int = Field(default=1, ge=1, le=8, description=(
         "Issues the daemon works at once, each in its own process. Planning stays one issue at a time; "
         "every run executes test_command, so size this to the host"))
+
+    @field_validator("focused_test_command")
+    @classmethod
+    def focused_placeholders(cls, command: list[str] | None) -> list[str] | None:
+        if command is None:
+            return None
+        if not command:
+            raise ValueError("focused_test_command must not be empty; omit it to run test_command")
+        found = {name for argument in command for name in PLACEHOLDER.findall(argument)}
+        unknown = sorted(found - FOCUSED_PLACEHOLDERS)
+        if unknown:
+            raise ValueError(f"focused_test_command has unknown placeholders {', '.join('{' + n + '}' for n in unknown)}; "
+                             "only {test_path} and {test_name} are filled")
+        if not found:
+            raise ValueError("focused_test_command must contain {test_path} or {test_name}")
+        return command
 
     @property
     def url(self) -> str:
