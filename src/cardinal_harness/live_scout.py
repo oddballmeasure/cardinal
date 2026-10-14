@@ -152,11 +152,51 @@ def clean(repository: str, url: str, branch: str, numbers: list[int], run_id: st
             "branch_deleted": not branch_left, "errors": errors, "clean": not still_open and not branch_left}
 
 
+def seed_branches(url: str) -> list[str]:
+    """Names of the remote's `scout-seed-*` branches (read-only)."""
+    out = subprocess.run(["git", "ls-remote", "--heads", url, f"refs/heads/{PREFIX}*"], text=True, capture_output=True,
+                         check=True, timeout=60).stdout
+    return sorted(line.split("\t", 1)[1].removeprefix("refs/heads/") for line in out.splitlines() if "\t" in line)
+
+
+def known_runs() -> dict[str, set[int]]:
+    """Run id -> issue numbers, from the manifests earlier runs left in artifacts/e2e."""
+    runs: dict[str, set[int]] = {}
+    for path in (ROOT / "artifacts" / "e2e").glob(f"*/{MANIFEST}"):
+        try:
+            manifest = json.loads(path.read_text())
+            runs[manifest["run_id"]] = {int(number) for number in manifest.get("issues", [])}
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    return runs
+
+
+def preflight(repository: str, url: str) -> dict | None:
+    """Earlier runs' leftovers that would make the scout dedupe the planted defects, or None. Read-only."""
+    issues: dict[int, str] = {}
+    for label in (PROPOSED, NEEDS_HUMAN):
+        for item in json.loads(gh("issue", "list", "-R", repository, "--state", "open", "--label", label,
+                                  "--limit", "100", "--json", "number,title")):
+            issues[item["number"]] = item["title"]
+    branches = seed_branches(url)
+    if not issues and not branches:
+        return None
+    runs = {branch.removeprefix(PREFIX) for branch in branches}
+    manifests = known_runs()
+    runs |= {run_id for run_id, numbers in manifests.items() if numbers & set(issues)}
+    accounted = set().union(*(manifests.get(run_id, set()) for run_id in runs)) if runs else set()
+    commands = [CLEANUP.format(run_id=run_id) for run_id in sorted(runs)]
+    commands += [f"Close #{number} by hand (no known run accounts for it): gh issue close {number} -R {repository}"
+                 for number in sorted(set(issues) - accounted)]
+    return {"issues": [{"number": number, "title": issues[number]} for number in sorted(issues)],
+            "branches": branches, "commands": commands}
+
+
 def run(model: str, artifact: Path, keep: bool) -> dict:
     return exclusive(run_locked, model, artifact, keep)
 
 
-def run_locked(model: str, artifact: Path, keep: bool) -> dict:
+def run_locked(model: str, artifact: Path, keep: bool, remote_url: str | None = None) -> dict:
     spec = json.loads(FIXTURE.read_text())
     suite = json.loads((ROOT / spec["suite"]).read_text())
     target = Target.of(suite)
@@ -176,6 +216,12 @@ def run_locked(model: str, artifact: Path, keep: bool) -> dict:
         try:
             model_env = load_model_key(model)
             use_github_cli_git_credentials()
+            leftovers = preflight(repository, remote_url or url)
+            if leftovers:  # nothing was written anywhere: no seeding, so no finish()/clean()
+                report["preflight_leftovers"] = leftovers
+                report["error"] = "Leftovers from earlier runs would be deduped by the scout; clean them first"
+                report["wall_seconds"] = round(time.monotonic() - started)
+                return report
             clone = temp / "seed"
             subprocess.run(["git", "clone", "-q", url, str(clone)], check=True, capture_output=True, timeout=300)
             manifest["seed_sha"] = commit_seed(clone, suite["baseline_sha"], spec)
