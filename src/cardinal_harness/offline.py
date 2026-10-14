@@ -21,6 +21,7 @@ and the independent acceptance tests in tests/acceptance.
 
 import itertools
 import json
+import math
 import os
 import re
 import shutil
@@ -596,10 +597,79 @@ def parallel(temp: Path, artifact: Path) -> dict:
     return {"checks": checks, "invocations": product.invocations}
 
 
+# How long a stop case waits for the daemon to show a run in flight. A parallel daemon starts the run in
+# a fresh `cardinal run` process, which imports the whole product before it claims, clones and records
+# its branch; on a loaded CI runner that has taken longer than two minutes. The wait ends as soon as the
+# state appears, so a generous bound costs nothing when things are healthy. The environment override
+# exists so a test can drive the failure path through the CLI.
+IN_FLIGHT_SECONDS = 300
+IN_FLIGHT_ENV = "CARDINAL_HARNESS_IN_FLIGHT_SECONDS"
+
+
+def in_flight(runs: list[dict]) -> bool:
+    return bool(runs and runs[-1]["status"] == "running" and runs[-1]["branch"])
+
+
+def wait_in_flight(product: Product, daemon_process: subprocess.Popen, issue: int, seconds: float,
+                   log: Path) -> tuple[bool, dict]:
+    """Poll `status N --json` until the latest run is `running` with a branch, the daemon exits, or the
+    deadline passes. Returns whether the run is in flight, and details that say which of these happened.
+    A failed status call (the store busy under the daemon's writes) is recorded and retried."""
+    started = time.monotonic()
+    deadline = started + seconds
+    observed: list[dict] = []
+    errors: list[dict] = []
+
+    def details(reason: str, **extra) -> dict:
+        return {"reason": reason, "elapsed_seconds": round(time.monotonic() - started, 1), **extra,
+                "runs": observed, "status_errors": errors[-5:], "log": str(log)}
+
+    while True:
+        code = daemon_process.poll()
+        if code is not None:
+            return False, details("the daemon exited before a run was in flight", exit=code)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False, details(f"the deadline of {seconds:g}s expired before a run was in flight")
+        status_code, payload = product("status", str(issue), "--json", timeout=max(1, min(60, math.ceil(remaining))))
+        if status_code == 0 and isinstance(payload, list):
+            observed = payload
+            if in_flight(observed):
+                return True, details("a run was in flight")
+        else:
+            errors.append({"exit": status_code, "output": str(payload)[:500]})
+        time.sleep(0.2)
+
+
+def kill_group(pid: int) -> None:
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def kill_daemon(product: Product, daemon_process: subprocess.Popen) -> None:
+    """SIGKILL the daemon's process group and any worker it started: a parallel worker runs in its own
+    session, so killing the daemon's group alone would leave it running."""
+    kill_group(daemon_process.pid)
+    daemon_process.wait()
+    for path in sorted((product.home / "logs").glob("*.jsonl")):
+        for line in path.read_text().splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if record.get("event") == "worker_started" and (record.get("data") or {}).get("pid"):
+                kill_group(record["data"]["pid"])
+
+
 def daemon_restart(temp: Path, artifact: Path) -> dict:
     """Stop a real daemon mid-run, then drain the same issue without touching its labels.
-    Cover both the in-process run and the daemon's CLI worker, under both graceful signals."""
+    Cover both the in-process run and the daemon's CLI worker, under both graceful signals.
+    The signal goes only to a daemon whose run `status` shows in flight; otherwise the daemon is
+    killed, and the case fails saying whether the deadline expired or the daemon exited."""
     checks: dict = {}
+    seconds = float(os.environ.get(IN_FLIGHT_ENV) or IN_FLIGHT_SECONDS)
     for parallel, signum in ((False, signal.SIGTERM), (True, signal.SIGTERM),
                              (False, signal.SIGINT), (True, signal.SIGINT)):
         name = f"{'parallel' if parallel else 'serial'}-{signum.name.lower()}"
@@ -613,26 +683,32 @@ def daemon_restart(temp: Path, artifact: Path) -> dict:
         with output.open("w") as log_file:
             daemon_process = subprocess.Popen(command, env=product.env, start_new_session=True,
                                               stdout=log_file, stderr=log_file)
+            mid_run = False
             try:
-                deadline = time.monotonic() + 120
-                observed = []
-                while time.monotonic() < deadline and daemon_process.poll() is None:
-                    observed = product.status(104)
-                    if observed and observed[-1]["status"] == "running" and observed[-1]["branch"]:
-                        break
-                    time.sleep(0.2)
-                mid_run = bool(observed and observed[-1]["status"] == "running" and observed[-1]["branch"])
-                expect(checks, f"{name}: daemon reached an in-flight run", mid_run, observed)
-                daemon_process.send_signal(signum)
-                try:
-                    daemon_process.wait(timeout=90)
-                except subprocess.TimeoutExpired:
-                    os.killpg(daemon_process.pid, signal.SIGKILL)
-                    daemon_process.wait()
+                mid_run, waited = wait_in_flight(product, daemon_process, 104, seconds, output)
+                expect(checks, f"{name}: daemon reached an in-flight run", mid_run, waited)
+                if mid_run:
+                    daemon_process.send_signal(signum)
+                    try:
+                        daemon_process.wait(timeout=90)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(daemon_process.pid, signal.SIGKILL)
+                        daemon_process.wait()
             finally:
-                if daemon_process.poll() is None:
+                if not mid_run:
+                    kill_daemon(product, daemon_process)
+                elif daemon_process.poll() is None:
                     os.killpg(daemon_process.pid, signal.SIGKILL)
                     daemon_process.wait()
+        if not mid_run:
+            # Nothing was stopped mid-run, so what the store shows now says nothing about requeueing.
+            skipped = {"skipped": "the daemon never reached an in-flight run, so it was killed, not signalled",
+                       "exit": daemon_process.returncode, "log": str(output)}
+            expect(checks, f"{name}: shutdown requeued and released its claim", False, skipped)
+            expect(checks, f"{name}: restart finishes without manual relabel or error", False, skipped)
+            json_file(artifact / name / "github_state.json", json.loads(state_path.read_text()))
+            product.keep_store()
+            continue
         before = product.status(104)
         issue_before = json.loads(state_path.read_text())["issues"]["104"]
         expect(checks, f"{name}: shutdown requeued and released its claim",
