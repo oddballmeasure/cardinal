@@ -162,7 +162,7 @@ def test_scout_proposes_checked_work_and_learns_from_outcomes():
     are read back and the rejection reaches the next survey; in auto mode a bug with a track record
     goes ready while a feature below its bars stays proposed; a held product decision goes to a person."""
     report = harness("offline", "--scenario", "scout", timeout=900)
-    assert len(report["checks"]) == 21
+    assert len(report["checks"]) == 26
 
 
 def logs_cli(home: Path, *args: str):

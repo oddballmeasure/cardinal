@@ -86,6 +86,8 @@ class Scout(Strict):
     auto_min_decided: int = Field(ge=1, description="Proposals of a category approved or rejected in 60 days")
     auto_min_approval: float = Field(ge=0, le=1)
     auto_min_done: float = Field(ge=0, le=1, description="Share of a category's landed issues that ended done")
+    at: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$",
+                           description="Serve mode runs one pass daily at this host-local 24-hour HH:MM")
 
 
 class Repo(Strict):
