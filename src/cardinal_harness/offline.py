@@ -1012,6 +1012,38 @@ def gh_retries(temp: Path, artifact: Path) -> dict:
     return {"checks": checks, "invocations": product.invocations}
 
 
+def gh_server_errors(temp: Path, artifact: Path) -> dict:
+    """HTTP 500 on the check-runs read inside the pr_manager's wait_for_ci tool, through the real CLI."""
+    checks: dict = {}
+    for name, count in (("recovers", 2), ("persistent", 60)):
+        root = temp / name
+        root.mkdir()
+        bare, state_path, state = world(root, ready=[19], ci=["success"])
+        state["gh_failures"] = [{"command": ["api"], "contains": "/check-runs",
+                                 "responses": [{"error": "gh: HTTP 500"}] * count}]
+        json_file(state_path, state)
+        product = configure(root, bare, state_path, artifact / name)
+        code, result = product("run", "19")
+        state = json.loads(state_path.read_text())
+        rows = product.status(19)
+        reads = [call for call in state["calls"] if call[:1] == ["api"] and "/check-runs" in call[1]]
+        merged = [pr for pr in state["prs"] if pr["state"] == "MERGED"]
+        if name == "recovers":
+            main = git(bare, "rev-parse", "refs/heads/main")
+            expect(checks, "two HTTP 500s on check-runs are retried and the run merges",
+                   code == 0 and result.get("status") == "done" and len(merged) == 1
+                   and main == merged[0]["mergeCommit"]["oid"] and len(reads) >= 3 and len(rows) == 1
+                   and rows[0]["status"] == "done", {"result": result, "reads": reads, "prs": state["prs"]})
+        else:
+            expect(checks, "persistent HTTP 500 fails the run as github, not a crash",
+                   code != 0 and bool(rows) and rows[-1]["status"] == "failed"
+                   and rows[-1]["failure_kind"] == "github" and not merged and len(reads) >= 3,
+                   {"result": result, "rows": rows, "reads": reads})
+        product.keep_store()
+        json_file(artifact / name / "github_state.json", state)
+    return {"checks": checks}
+
+
 def push_retries(temp: Path, artifact: Path) -> dict:
     """Drive publish through the real CLI and bare remote, faulting only the git executable's push response."""
     checks: dict = {}
@@ -1249,7 +1281,7 @@ SCENARIOS = {"single": single, "daemon": daemon, "multi-daemon": multi_daemon, "
              "cleaner": cleaner, "monitor": monitor, "base-sync": base_sync, "post-merge": post_merge,
              "parallel": parallel, "daemon-restart": daemon_restart, "worker-killed": worker_killed,
              "scout": scout, "documentation": documentation, "file-tool-refusal": file_tool_refusal,
-             "gh-retries": gh_retries, "push-retries": push_retries, "setup-recovery": setup_recovery,
+             "gh-retries": gh_retries, "push-retries": push_retries, "gh-server-errors": gh_server_errors, "setup-recovery": setup_recovery,
                "claude-code": claude_code}
 
 

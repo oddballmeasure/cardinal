@@ -15,8 +15,8 @@ RETRYABLE_COMMANDS = {
     ("issue", "edit"), ("label", "create"), ("pr", "view"), ("pr", "list"),
     ("api",),
 }
-TRANSIENT = re.compile(r"something went wrong|\b(?:http\s*)?(?:502|503|504)\b|bad gateway|"
-                       r"service unavailable|gateway timeout", re.IGNORECASE)
+TRANSIENT = re.compile(r"something went wrong|\b(?:http\s*)?(?:500|502|503|504)\b|bad gateway|"
+                       r"internal server error|service unavailable|gateway timeout", re.IGNORECASE)
 PERMANENT = re.compile(r"\b(?:403|404)\b|permission denied|forbidden|validation failed|"
                        r"unprocessable entity", re.IGNORECASE)
 

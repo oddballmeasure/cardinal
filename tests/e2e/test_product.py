@@ -68,6 +68,11 @@ def test_gh_transient_failures_retry_but_permanent_failures_do_not():
     assert len(report["checks"]) == 7
 
 
+def test_github_http_500_in_an_agent_tool_is_retried_then_fails_as_github():
+    report = harness("offline", "--scenario", "gh-server-errors", timeout=900)
+    assert len(report["checks"]) == 2
+
+
 def test_verified_branch_push_recovers_from_transient_remote_failure_without_retrying_permanent_rejections():
     report = harness("offline", "--scenario", "push-retries", timeout=1200)
     assert len(report["checks"]) == 11
