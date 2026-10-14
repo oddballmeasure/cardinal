@@ -8,6 +8,7 @@ session that still reports one is stopped before its first turn.
 """
 
 import functools
+import os
 import time
 from contextlib import aclosing
 from dataclasses import dataclass, field
@@ -47,6 +48,12 @@ class Watch:
     last: float = field(default_factory=time.monotonic)
     busy: int = 0
     error: BaseException | None = None
+
+
+def cli_path() -> str | None:
+    """CARDINAL_CLAUDE_CLI_PATH names the `claude` executable to run. The SDK ships a bundled CLI and
+    ignores PATH, so this is how an outside harness substitutes a stand-in."""
+    return os.environ.get("CARDINAL_CLAUDE_CLI_PATH") or None
 
 
 def model_name(spec: str) -> str:
@@ -140,7 +147,7 @@ def file_tools(backend, *, writable: bool) -> list:
 
 def role_tool(base, watch: Watch, cancel: anyio.CancelScope):
     """A role's LangChain tool, served over MCP. Its exceptions end the call, as they do on the other path."""
-    schema = base.tool_call_schema.model_json_schema()
+    schema = strict_schema(base.tool_call_schema.model_json_schema())  # the CLI validates tool schemas strictly too
     schema.pop("title", None)
 
     @tool(base.name, base.description, schema, annotations=ToolAnnotations(maxResultSizeChars=RESULT_CHARS))
@@ -195,7 +202,7 @@ def strict_schema(node):
 def options(call, model: str, tools: list, max_turns: int, skills: Path, stderr: list[str]) -> ClaudeAgentOptions:
     server = create_sdk_mcp_server(SERVER, tools=tools)
     return ClaudeAgentOptions(
-        model=model, system_prompt=system_prompt(skills), cwd=str(call.context_dir),
+        model=model, system_prompt=system_prompt(skills), cwd=str(call.context_dir), cli_path=cli_path(),
         tools=[], allowed_tools=[f"mcp__{SERVER}__{item.name}" for item in tools],
         mcp_servers={SERVER: server}, strict_mcp_config=True, setting_sources=[], max_turns=max_turns,
         output_format={"type": "json_schema", "schema": strict_schema(call.schema.model_json_schema())}
@@ -284,7 +291,7 @@ async def ping(model: str) -> str:
     seen = {}
     opts = ClaudeAgentOptions(model=model, system_prompt="Reply with the single word ok.", tools=[],
                               strict_mcp_config=True, setting_sources=[], max_turns=1,
-                              env=dict.fromkeys(BILLING_ENV, ""))
+                              cli_path=cli_path(), env=dict.fromkeys(BILLING_ENV, ""))
     async with aclosing(query(prompt="ok?", options=opts)) as stream:
         async for message in stream:
             reason = stop(message, "probe")
