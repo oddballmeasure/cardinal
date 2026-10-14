@@ -109,3 +109,7 @@ harness in `src/cardinal_harness` grades it from outside. Mark `[x]` only with e
 - [x] `AGENTS.md` dropped its agent-facing lines (the product ships `skills/CONVENTIONS.md`); it now points coding agents at `CLAUDE.md`
 - [ ] Live `test_command` runs the harness interpreter (it has pytest + Playwright); a real operator needs the repo to own its test environment
 - [ ] Product deploy for the notes repo only reports healthy through the harness's mock host; its committed health check needs a `ready` file that only the mock creates
+- [x] cardinal#31: `daemon-restart` signals each stop case only once `status 104 --json` shows the latest run `running` with a branch; a deadline or an early daemon exit fails the case saying which, and the daemon is killed, not signalled
+- [x] `offline --scenario NAME --repeat N` runs a scenario N times in a row, stops at the first failure, and reports `host` and `consecutive_passes`
+- [x] Check: `offline --scenario daemon-restart --repeat 10` on host `oscar` (2026-10-14, artifact b32d2b3240c8493bbf4295509ff3aa78): 10 of 10 consecutive passes, 195–225s each, every run 15/15 checks. Cardinal's coder ran it through the repository test command; a person on oscar has not yet confirmed it
+- [ ] Person on oscar: rerun `uv run --locked python -m cardinal_harness offline --scenario daemon-restart --repeat 10` and confirm 10/10 for cardinal#31

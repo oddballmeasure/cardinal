@@ -209,24 +209,41 @@ def test_parallel_workers_plan_one_at_a_time_and_land_sibling_merges():
 
 
 def test_graceful_daemon_restart_requeues_serial_and_parallel_runs_for_both_signals():
-    report = harness("offline", "--scenario", "daemon-restart", timeout=1800)
-    assert len(report["checks"]) == 15  # four stop cases of three checks, plus SIGTERM after settling
-    for case in ("serial-sigterm", "parallel-sigterm", "serial-sigint", "parallel-sigint"):
-        reached = report["checks"][f"{case}: daemon reached an in-flight run"]["detail"]
-        assert reached["runs"][-1]["status"] == "running" and reached["runs"][-1]["branch"], reached
+    """Run back to back with `--repeat`, which records the host and the consecutive passes; the same
+    command with `--repeat 10` is the issue's 10-in-a-row reliability check."""
+    summary = harness("offline", "--scenario", "daemon-restart", "--repeat", "2", timeout=3600)
+    assert summary["scenario"] == "daemon-restart" and summary["host"]
+    assert summary["repeat"] == summary["attempted"] == summary["consecutive_passes"] == 2
+    assert [run["run"] for run in summary["runs"]] == [1, 2]
+    assert "--repeat 2" in summary["rerun_command"]
+    for run in summary["runs"]:
+        assert run["passed"] and not run["failed_checks"], run
+        report = json.loads((Path(run["artifact"]) / "report.json").read_text())
+        assert report["passed"] and len(report["checks"]) == 15  # four stop cases of three, plus SIGTERM after settling
+        for case in ("serial-sigterm", "parallel-sigterm", "serial-sigint", "parallel-sigint"):
+            reached = report["checks"][f"{case}: daemon reached an in-flight run"]["detail"]
+            assert reached["runs"][-1]["status"] == "running" and reached["runs"][-1]["branch"], reached
 
 
 def test_daemon_restart_kills_instead_of_signalling_a_daemon_with_no_run_in_flight():
     """When no run is in flight before the deadline, every stop case fails saying the deadline expired,
-    the daemon is SIGKILLed rather than sent the graceful signal, and the report keeps its 15 checks."""
+    the daemon is SIGKILLed rather than sent the graceful signal, and the report keeps its 15 checks.
+    A repeated run stops at that first failure and reports zero consecutive passes."""
     import signal
 
-    process = run_bounded([sys.executable, "-m", "cardinal_harness", "offline", "--scenario", "daemon-restart"], 1800,
+    process = run_bounded([sys.executable, "-m", "cardinal_harness", "offline", "--scenario", "daemon-restart",
+                           "--repeat", "3"], 1800,
                           cwd=ROOT, env={**os.environ, "CARDINAL_HARNESS_IN_FLIGHT_SECONDS": "0"})
     assert process.stdout.strip(), process.stderr[-3000:]
     summary = json.loads(process.stdout.strip().splitlines()[-1])
-    report = json.loads((Path(summary["artifact"]) / "report.json").read_text())
-    assert process.returncode == 1 and not report["passed"]
+    repeated = json.loads((Path(summary["artifact"]) / "report.json").read_text())
+    assert process.returncode == 1 and not summary["passed"] and not repeated["passed"]
+    assert repeated["repeat"] == 3 and repeated["attempted"] == 1 and repeated["consecutive_passes"] == 0
+    assert [check["ok"] for check in repeated["checks"].values()] == [False]
+    report = json.loads((Path(repeated["runs"][0]["artifact"]) / "report.json").read_text())
+    assert not report["passed"]
+    assert repeated["runs"][0]["failed_checks"] == sorted(name for name, check in report["checks"].items()
+                                                         if not check["ok"])
     checks = report["checks"]
     assert len(checks) == 15
     cases = ("serial-sigterm", "parallel-sigterm", "serial-sigint", "parallel-sigint")

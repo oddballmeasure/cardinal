@@ -223,6 +223,7 @@ read-only.
 ```sh
 uv run --locked python -m pytest -q                              # offline scenarios, no network
 uv run --locked python -m cardinal_harness offline --scenario single      # or daemon | ci-failure | ci-repair | deploy | cleaner | monitor | base-sync | post-merge | parallel | worker-killed | scout
+uv run --locked python -m cardinal_harness offline --scenario daemon-restart --repeat 10  # N runs in a row; stops at the first failure
 uv run --locked --extra openai --extra e2e python -m cardinal_harness live --model openai:gpt-6-sol
 uv run --locked --extra openai --extra e2e python -m cardinal_harness live-scout --model openai:gpt-6-sol [--keep-issues]
 ```
