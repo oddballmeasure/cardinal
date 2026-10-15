@@ -58,6 +58,8 @@ source_repo = "oddballmeasure/cardinal"  # Cardinal's own defects are filed here
 slug = "{slug}"
 base_branch = "main"
 test_command = ["python", "-m", "pytest", "-q", "tests"]
+# Optional: scout repros run only their new test with this; everything else uses test_command.
+# focused_test_command = ["python", "-m", "pytest", "-q", "{{test_path}}::{{test_name}}"]
 required_checks = []
 paths_off_limits = [".github/"]
 paths_hidden = []

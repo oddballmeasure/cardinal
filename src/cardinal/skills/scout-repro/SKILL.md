@@ -12,6 +12,9 @@ tests only. Output: one `ReproResult`.
 2. Write one new test that states the proposal's acceptance criteria at the application's
    boundary (HTTP, CLI or UI), so it fails now and passes once the bug is fixed.
 3. Call `run_repo_tests` and confirm the new test fails for the reason the proposal gives.
-   If it passes, the bug did not reproduce: say so in `note`.
+   If the tool takes `test_path` and `test_name`, it runs only that test: pass the repo-relative
+   path of your test file and the test's name, the same values you will return. A run that
+   collects no tests shows nothing; fix the path or name. If the test passes, the bug did not
+   reproduce: say so in `note`.
 
 Change only test files. Do not fix the bug. Name the test exactly as the runner reports it.

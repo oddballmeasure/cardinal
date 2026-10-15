@@ -9,6 +9,10 @@ product decision for a person. It runs with autonomy "auto" over a seeded record
 a bug with a failing repro test goes straight to ready, a feature below its bars stays proposed,
 and a bug whose "failing" test passes on base is dropped. Pass 3 reads the approved issue's
 landing as done.
+
+The repository sets focused_test_command, and every test-command invocation is recorded: main moves
+between passes 1 and 2, so each pass that reproduces bugs runs the full suite once for its base, and
+each repro runs only its own test, by path and name.
 """
 
 import json
@@ -22,7 +26,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from cardinal_harness import fake_gh, scout_replay
-from cardinal_harness.offline import SLUG, expect, world
+from cardinal_harness.offline import SLUG, expect, git, world
 from cardinal_harness.product import Product, json_file, product_env, run_bounded, write_config
 
 ROLES = ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor", "scout", "scout_reviewer")
@@ -34,10 +38,58 @@ SCOUT = {"autonomy": "propose", "categories": ["bug", "feature"], "areas_per_pas
 REJECTION = "Not wanted: this CLI only filters by merchant; amount filters belong in the report tool."
 
 
+FULL = ["-q", "tests"]
+FOCUSED = ["-q", "{test_path}::{test_name}"]
+RECORDER = '''import json
+import os
+import sys
+
+with open({log!r}, "a") as output:
+    output.write(json.dumps({{"argv": sys.argv[1:], "cwd": os.getcwd()}}) + "\\n")
+os.execv(sys.executable, [sys.executable, "-m", "pytest", *sys.argv[1:]])
+'''
+
+
+def recorder(home: Path) -> Path:
+    """A test runner that appends each invocation's argv and directory to a log, then runs pytest."""
+    script = home.parent / "test-runner" / "record_tests.py"
+    if not script.exists():
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(RECORDER.format(log=str(script.parent / "invocations.jsonl")))
+    return script
+
+
+def recorded_runs(home: Path) -> list[dict]:
+    log = recorder(home).parent / "invocations.jsonl"
+    return [json.loads(line) for line in log.read_text().splitlines() if line.strip()] if log.exists() else []
+
+
 def write(home: Path, bare: Path, scout: dict) -> None:
+    runner = [sys.executable, str(recorder(home))]
     write_config(home, models={role: "replay:scripted" for role in ROLES}, slug=SLUG, remote_url=str(bare),
-                 test_command=[sys.executable, "-m", "pytest", "-q", "tests"], required_checks=[],
+                 test_command=[*runner, *FULL], focused_test_command=[*runner, *FOCUSED], required_checks=[],
                  paths_off_limits=[".github/"], deploy=None, sections={"scout": scout})
+
+
+def check_test_runs(checks: dict, passes: list[tuple[str, list[dict], list[str]]]) -> None:
+    """From recorded invocations: each pass ran the full test command exactly once, outside any repro
+    worktree, and each repro worktree ran only the focused command, filled from its ReproResult, twice:
+    the agent's own run and the confirming one."""
+    full, focused, ran_once = {}, {}, True
+    for name, runs, titles in passes:
+        repro = [run for run in runs if "-repro-" in Path(run["cwd"]).name]
+        full[name] = [run for run in runs if run not in repro]
+        # A pass with no bug to reproduce never needs the base-green run.
+        ran_once &= [run["argv"] for run in full[name]] == ([FULL] if titles else [])
+        groups: dict[str, list] = {}
+        for run in repro:
+            groups.setdefault(run["cwd"], []).append(run["argv"])
+        expected = sorted([["-q", f"{path}::{test}"]] * 2 for path, test, _ in (scout_replay.REPRO_TESTS[t] for t in titles))
+        focused[name] = {"groups": groups, "expected": expected, "ok": sorted(groups.values()) == expected}
+    expect(checks, "from recorded invocations, the full test command ran exactly once per pass that reproduces bugs, "
+           "for base-green, and not in a pass with nothing to reproduce", ran_once and any(full.values()), full)
+    expect(checks, "from recorded invocations, each repro ran only the focused command with its test path and name",
+           all(item["ok"] for item in focused.values()), focused)
 
 
 def configure(temp: Path, bare: Path, state_path: Path, artifact: Path) -> Product:
@@ -63,6 +115,7 @@ def scenario(temp: Path, artifact: Path) -> dict:
     checks: dict = {}
 
     code, first = product("scout", "--once", "--repo", SLUG)
+    first_runs = recorded_runs(product.home)
     seen = by_title(first)
     state = json.loads(state_path.read_text())
     real = filed(state, scout_replay.MISSING_INPUT.title)
@@ -106,8 +159,16 @@ def scenario(temp: Path, artifact: Path) -> dict:
                        " filed_mode, issue, outcome, created_at, decided_at) VALUES (?, 'seed', ?, 'bug', ?, '{}',"
                        " 'filed', 'proposed', ?, 'done', datetime('now'), strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'))",
                        (SLUG, f"seed-{number}", f"Seeded bug {number}", 900 + number))
+    # Main moves on, so pass 2 has a base of its own that has not been proven green yet.
+    seed = temp / "seed"
+    with (seed / "README.md").open("a") as readme:
+        readme.write("\nRun `python -m ledger --help` for its options.\n")
+    git(seed, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qam", "Mention --help")
+    git(seed, "push", "-q", str(bare), "HEAD:main")
     write(product.home, bare, {**SCOUT, "autonomy": "auto", "max_proposals_per_pass": 5})
+    before = len(recorded_runs(product.home))
     code, second = product("scout", "--once", "--repo", SLUG)
+    second_runs = recorded_runs(product.home)[before:]
     state = json.loads(state_path.read_text())
     read_back = {item["issue"]: item for item in second.get("outcomes", [])} if isinstance(second, dict) else {}
     expect(checks, "pass 2 reads the label swap as approval and the close as rejection, with its comment",
@@ -157,7 +218,12 @@ def scenario(temp: Path, artifact: Path) -> dict:
 
     state["issues"][str(approved.get("number"))].update(labels=["cardinal:done"], state="CLOSED")
     json_file(state_path, state)
+    before = len(recorded_runs(product.home))
     code, third = product("scout", "--once", "--repo", SLUG)
+    third_runs = recorded_runs(product.home)[before:]
+    check_test_runs(checks, [("pass 1", first_runs, [scout_replay.MISSING_INPUT.title]),
+                         ("pass 2", second_runs, [scout_replay.MALFORMED.title, scout_replay.UNKNOWN.title]),
+                         ("pass 3", third_runs, [])])
     code_status, status = product("scout", "status", "--repo", SLUG)
     categories = (status or {}).get("categories", {}) if isinstance(status, dict) else {}
     expect(checks, "pass 3 surveys nothing new and reads the approved issue's landing as done",
@@ -172,7 +238,7 @@ def scenario(temp: Path, artifact: Path) -> dict:
 
     product.keep_store()
     json_file(artifact / "github_state.json", json.loads(state_path.read_text()))
-    return {"checks": checks, "invocations": product.invocations}
+    return {"checks": checks, "invocations": product.invocations, "test_runs": recorded_runs(product.home)}
 
 
 def cli(product: Product, *args: str, timeout: int = 60):

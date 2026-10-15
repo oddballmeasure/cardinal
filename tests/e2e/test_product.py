@@ -154,6 +154,38 @@ def test_subscription_ceiling_is_validated_when_the_config_loads(tmp_path):
         assert "subscription" in error, (section, error)
 
 
+def test_focused_test_command_is_validated_when_the_config_loads(tmp_path):
+    """[[repos]] focused_test_command is optional; when set it needs {test_path} or {test_name} and
+    refuses any other placeholder. The template's commented example stays commented."""
+    home = tmp_path / "cardinal-home"
+    base = [sys.executable, "-m", "cardinal.cli.main", "--home", str(home)]
+    init = run_bounded([*base, "init", "--repo", "team/app"], timeout=30, cwd=ROOT)
+    assert init.returncode == 0, init.stderr
+    config = home / "cardinal.toml"
+    template = config.read_text()
+    assert '# focused_test_command = ["python", "-m", "pytest", "-q", "{test_path}::{test_name}"]' in template
+    assert template.rstrip().endswith("base_sync_rounds with it")  # appended keys land in [[repos]]
+
+    def status(line: str):
+        config.write_text(template + line)
+        return run_bounded([*base, "status", "--json"], timeout=30, cwd=ROOT)
+
+    for line in ("", 'focused_test_command = ["python", "-m", "pytest", "-q", "{test_path}::{test_name}"]\n',
+                 'focused_test_command = ["pytest", "{test_path}"]\n',
+                 'focused_test_command = ["pytest", "-k", "{test_name}"]\n'):
+        shown = status(line)
+        assert shown.returncode == 0 and json.loads(shown.stdout) == [], (line, shown.stderr)
+    for line, reason in (('focused_test_command = ["pytest", "-q", "tests"]\n', "{test_path} or {test_name}"),
+                         ('focused_test_command = ["pytest", "{test_path}::{foo}"]\n', "{foo}"),
+                         ('focused_test_command = ["pytest", "{test_name}", "--x={}"]\n', "{}"),
+                         ("focused_test_command = []\n", "empty"),
+                         ('focused_test_command = "pytest {test_path}"\n', "list")):
+        refused = status(line)
+        assert refused.returncode == 2 and refused.stdout == "", (line, refused.stdout)
+        error = json.loads(refused.stderr.strip().splitlines()[-1])["error"]
+        assert "focused_test_command" in error and reason in error, (line, error)
+
+
 def test_processes_opening_a_new_store_at_once_all_succeed(tmp_path):
     """A daemon and the `status` polls watching it may all be the first to open a home's store: each
     switches it to WAL and creates its tables, and none may fail with "database is locked"."""
@@ -292,9 +324,10 @@ def test_scout_proposes_checked_work_and_learns_from_outcomes():
     failing repro test; a fabricated quote, a duplicate, a reviewer refusal and an unreproduced bug
     are dropped; the cap holds the overflow; the daemon leaves proposals alone; approval and rejection
     are read back and the rejection reaches the next survey; in auto mode a bug with a track record
-    goes ready while a feature below its bars stays proposed; a held product decision goes to a person."""
+    goes ready while a feature below its bars stays proposed; a held product decision goes to a person.
+    Recorded test invocations show the full suite ran once per pass and each repro ran only its focused test."""
     report = harness("offline", "--scenario", "scout", timeout=900)
-    assert len(report["checks"]) == 26
+    assert len(report["checks"]) == 28
 
 
 def test_live_scout_stops_before_seeding_when_earlier_runs_left_issues_or_branches(tmp_path, monkeypatch):
