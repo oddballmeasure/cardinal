@@ -84,7 +84,8 @@ def route(args, home: Home, config, db, sink):
         at = config.scout.at if config.scout else None
         if at is not None and args.interval is not None:
             raise ValueError(f"[scout] at = {at!r} schedules a daily pass; --interval cannot be combined with at")
-        scout.serve(home, config, db, repo, args.interval or scout.DEFAULT_INTERVAL, at)
+        interval = scout.DEFAULT_INTERVAL if args.interval is None else args.interval
+        scout.serve(home, config, db, repo, interval, at)
     raise ValueError(f"Unknown command {args.command}")
 
 

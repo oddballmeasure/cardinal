@@ -10,6 +10,17 @@ from pathlib import Path
 from cardinal.cli import commands
 
 
+def positive_int(value: str) -> int:
+    """argparse type for a whole number of seconds greater than zero."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an integer") from None
+    if number <= 0:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {number}")
+    return number
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="cardinal", description="Resolve GitHub issues with a team of coding agents.")
     root.add_argument("--home", type=Path, help="Cardinal home (default $CARDINAL_HOME or ~/.cardinal)")
@@ -45,7 +56,7 @@ def parser() -> argparse.ArgumentParser:
     daemon = sub.add_parser("daemon", help="Work ready issues in every configured repository (or one with --repo)")
     daemon.add_argument("--repo")
     daemon.add_argument("--once", action="store_true", help="Drain the ready queue, then exit")
-    daemon.add_argument("--interval", type=int, default=60)
+    daemon.add_argument("--interval", type=positive_int, default=60)
 
     logs = sub.add_parser("logs", help="Log record contract")
     logs_sub = logs.add_subparsers(dest="logs_command", required=True)
@@ -61,13 +72,13 @@ def parser() -> argparse.ArgumentParser:
 
     watch = sub.add_parser("monitor", help="File issues for repeated errors in the logs")
     watch.add_argument("--once", action="store_true", help="Scan once, then exit")
-    watch.add_argument("--interval", type=int, default=300)
+    watch.add_argument("--interval", type=positive_int, default=300)
 
     scout = sub.add_parser("scout", help="Find, review and propose work for one repository")
     scout.add_argument("action", nargs="?", choices=["status"], help="status: track record and gate per category")
     scout.add_argument("--repo")
     scout.add_argument("--once", action="store_true", help="Run one pass, then exit")
-    scout.add_argument("--interval", type=int, default=None, help="Seconds between passes (default 86400; not with [scout] at)")
+    scout.add_argument("--interval", type=positive_int, default=None, help="Seconds between passes (default 86400; not with [scout] at)")
     return root
 
 
