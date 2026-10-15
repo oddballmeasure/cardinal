@@ -61,12 +61,14 @@ def judge(repo: Repo, db: sqlite3.Connection, row: sqlite3.Row) -> None:
         post_merge.record(db, repo.slug, sha, run_id, "passed", rerun)
         log.info("CI passed on merge %s", sha[:12], extra={"event": "post_merge_passed", "data": {"merge_sha": sha}})
         return
-    runs = sorted({match.group(1) for name in failed
-                   if (match := ACTIONS_RUN.search(checks[name].get("details_url") or ""))})
+    actions = {name: match.group(1) for name in failed
+               if (match := ACTIONS_RUN.search(checks[name].get("details_url") or ""))}
+    runs = sorted(set(actions.values()))
     if not rerun and runs:
         for number in runs:
             gh("run", "rerun", number, "--failed", "-R", repo.slug)
-        post_merge.record(db, repo.slug, sha, run_id, "rerun", [checks[name]["id"] for name in failed])
+        # Only re-run checks get replaced; waiting on any other failed check would block until GIVE_UP.
+        post_merge.record(db, repo.slug, sha, run_id, "rerun", [checks[name]["id"] for name in actions])
         log.warning("re-ran %s failed on merge %s", failed, sha[:12],
                     extra={"event": "post_merge_rerun", "data": {"merge_sha": sha, "checks": failed, "runs": runs}})
         return
