@@ -1,5 +1,6 @@
 """Run rows. Status is read back by `status`, `resume` and the daemon, so writes here raise."""
 
+import json
 import sqlite3
 
 from cardinal.store.db import now
@@ -36,6 +37,19 @@ def is_settled(db: sqlite3.Connection, run_id: str) -> bool:
     """True once settle() has recorded its `run settled` event for this run."""
     return db.execute("SELECT 1 FROM events WHERE run_id = ? AND stage = 'run' AND kind = 'settled' LIMIT 1",
                       (run_id,)).fetchone() is not None
+
+
+def settled_event(db: sqlite3.Connection, run_id: str) -> dict | None:
+    """The decoded data of this run's most recent `run settled` event, or None if it has none."""
+    row = db.execute("SELECT data FROM events WHERE run_id = ? AND stage = 'run' AND kind = 'settled'"
+                     " ORDER BY id DESC LIMIT 1", (run_id,)).fetchone()
+    if row is None:
+        return None
+    try:
+        data = json.loads(row[0])
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def get(db: sqlite3.Connection, run_id: str) -> sqlite3.Row:

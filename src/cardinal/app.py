@@ -180,6 +180,24 @@ def finish_settled(repo: Repo, db: sqlite3.Connection, run_id: str, number: int)
         issues.set_state(repo.slug, number, labels, labels.needs_human)
     elif row["status"] == "failed":
         issues.set_state(repo.slug, number, labels, labels.error)
+        if not any(body.startswith(STOPPED_AT) for body in issues.comment_bodies(repo.slug, number)):
+            settled = runs.settled_event(db, run_id) or {}
+            failure = settled.get("failure")
+            if not isinstance(failure, dict) or not failure:
+                failure = {key: value for key, value in (("kind", row["failure_kind"]),
+                                                         ("detail", row["failure_detail"])) if value is not None}
+            issues.comment(repo.slug, number, stopped_comment(failure))
+
+
+STOPPED_AT = "Cardinal stopped at"
+
+
+def stopped_comment(failure: dict) -> str:
+    """The issue comment for a run that settled `failed`; settle() and finish_settled() share it."""
+    kind = failure.get("kind", "crash")
+    # Provider and crash detail stays in the store; the issue gets the category only.
+    public = "" if kind in {"provider", "crash"} else ": " + (failure.get("detail") or "")[:600]
+    return f"{STOPPED_AT} `{failure.get('stage', '?')}` ({kind}){public}"
 
 
 def drive(run: Run, thread_id: str, payload, *, daemon: bool = False) -> dict:
@@ -238,9 +256,6 @@ def settle(run: Run, values: dict, paused: bool) -> dict:
         issues.comment(repo.slug, number, f"Cardinal is not taking this issue: {reason}")
     else:
         issues.set_state(repo.slug, number, labels, labels.error)
-        kind = failure.get("kind", "crash")
-        # Provider and crash detail stays in the store; the issue gets the category only.
-        public = "" if kind in {"provider", "crash"} else ": " + failure.get("detail", "")[:600]
-        issues.comment(repo.slug, number, f"Cardinal stopped at `{failure.get('stage', '?')}` ({kind}){public}")
+        issues.comment(repo.slug, number, stopped_comment(failure))
     return {"run_id": run.run_id, "issue": number, "status": status, "failure": failure or None,
             "branch": run.branch, "pr": values.get("pr"), "merge_sha": values.get("merge_sha")}
