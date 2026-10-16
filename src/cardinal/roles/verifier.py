@@ -64,9 +64,12 @@ def verify(run: Run, decision: IntakeDecision, base_sha: str, head_evidence: Com
         findings.append("The verifier did not approve the change")
     if assessment.head_sha != head_sha:
         findings.append(f"The assessment names head {assessment.head_sha}, not {head_sha}")
-    if set(assessment.requirements) != ids or not all(assessment.requirements.values()):
-        missing = sorted(ids - {key for key, value in assessment.requirements.items() if value})
+    missing = sorted(ids - {key for key, value in assessment.requirements.items() if value})
+    if missing:
         findings.append(f"Requirements not shown to be delivered: {missing}")
+    unknown = sorted(set(assessment.requirements) - ids)
+    if unknown:
+        findings.append(f"The assessment names unknown requirements: {unknown}")
     if code_changed and not assessment.tests_are_e2e:
         findings.append("The repository tests added for this change do not exercise the application boundary")
     if code_changed and not tests_changed:
