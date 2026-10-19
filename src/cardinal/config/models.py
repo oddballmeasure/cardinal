@@ -75,6 +75,14 @@ class Ingest(Strict):
     bind: str = Field(pattern=r"^[^:\s]+:\d{1,5}$", description="host:port the ingest endpoint listens on")
     token_env: str = Field(min_length=1, description="Environment variable holding the bearer token apps send")
 
+    @field_validator("bind")
+    @classmethod
+    def bind_port(cls, bind: str) -> str:
+        port = int(bind.rsplit(":", 1)[1])
+        if port > 65535:
+            raise ValueError(f"bind port {port} is above 65535")
+        return bind
+
 
 class Monitor(Strict):
     min_occurrences: int = Field(ge=1, description="Error records a fingerprint needs within the window")
