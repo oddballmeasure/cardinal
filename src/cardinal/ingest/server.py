@@ -48,7 +48,12 @@ def handler_for(token: str, repos: set[str], sink: Sink):
             given = self.headers.get("Authorization", "").removeprefix("Bearer ")
             if not hmac.compare_digest(given.encode(), token.encode()):
                 return self.reply(401, {"error": "missing or wrong bearer token"})
-            length = int(self.headers.get("Content-Length") or 0)
+            raw_length = (self.headers.get("Content-Length") or "0").strip()
+            if not (raw_length.isascii() and raw_length.isdigit()):
+                # The body length is unknown, so the body cannot be skipped: close the connection.
+                self.close_connection = True
+                return self.reply(400, {"error": f"Content-Length must be a non-negative integer, got {raw_length!r}"})
+            length = int(raw_length)
             if length > MAX_BODY:
                 return self.reply(413, {"error": f"body over {MAX_BODY} bytes"})
             try:
