@@ -176,6 +176,18 @@ class Config(Strict):
             raise ValueError(f"[scout] needs [models] {', '.join(missing)}")
         return self
 
+    @model_validator(mode="after")
+    def unique_repo_slugs(self) -> "Config":
+        seen: set[str] = set()
+        repeated: list[str] = []
+        for repo in self.repos:
+            if repo.slug in seen and repo.slug not in repeated:
+                repeated.append(repo.slug)
+            seen.add(repo.slug)
+        if repeated:
+            raise ValueError("; ".join(f"[[repos]] slug {slug} appears more than once" for slug in repeated))
+        return self
+
     def repo(self, slug: str | None) -> Repo:
         if slug is None:
             if len(self.repos) != 1:
