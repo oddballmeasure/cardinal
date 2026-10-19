@@ -82,14 +82,14 @@ commented example.
 | | `scout`, `scout_reviewer` | Required only with `[scout]`. `scout` plans, surveys and writes repro tests; `scout_reviewer` judges each proposal |
 | `[logging]` | `level`, `source_repo` | Required. `source_repo` is where Cardinal files its own defects |
 | `[[repos]]` | `slug`, `base_branch`, `test_command`, `required_checks`, `paths_off_limits`, `paths_hidden` | Required, one table per repository. `test_command` is an argv list (no shell) and is the only test oracle. `required_checks = []` merges without waiting for CI. Agents cannot change `paths_off_limits`, and can neither see nor change `paths_hidden` (for example a grader kept in the repository) |
-| | `remote_url`, `branch_prefix`, `retry_after_hours` | Optional. Defaults: `https://github.com/<slug>`, `cardinal`, and no automatic retry (at least 24 when set) |
+| | `remote_url`, `branch_prefix`, `retry_after_hours`, `focused_test_command`, `max_parallel_runs` | Optional. Defaults: `https://github.com/<slug>`, `cardinal`, no automatic retry (at least 24 when set), no `focused_test_command`, and `max_parallel_runs = 1`. `focused_test_command` is an argv list that runs one test and must contain `{test_path}` and/or `{test_name}`; only scout repro tests use it, and `test_command` stays the oracle. `max_parallel_runs` is how many issues the daemon works on at once (1-8) |
 | `[repos.labels]` | `ready`, `working`, `done`, `error`, `needs_human`, `investigate`, `proposed` | Optional renames of the `cardinal:*` labels |
 | `[repos.deploy]` | `transport`, `local_directory` | Optional. `local` or `ssh`; see Deployment |
 | `[limits]` | `recursion_limit`, `coder_attempts`, `verify_rounds`, `ci_repair_rounds`, `base_sync_rounds`, `test_timeout_seconds`, `ci_timeout_seconds`, `ci_poll_seconds`, `model_timeout_seconds` | Optional; defaults are in `examples/cardinal.toml` |
 | `[subscription]` | `max_five_hour_utilization` | Optional, `0 < x <= 1`. `claude-code:` sessions at or above this share of the five-hour window stop and wait for it to reset; see Running on a Claude Code subscription |
 | `[ingest]` | `bind`, `token_env` | Optional; enables `cardinal ingest` |
 | `[monitor]` | `min_occurrences`, `window_hours`, `max_issues_per_pass` | Optional; enables `cardinal monitor` |
-| `[scout]` | `autonomy`, `categories`, `areas_per_pass`, `cooldown_days`, `max_proposals_per_pass`, `max_files`, `repro`, `auto_min_decided`, `auto_min_approval`, `auto_min_done` | Optional; enables `cardinal scout`. Every key is required; see Finding work |
+| `[scout]` | `autonomy`, `categories`, `areas_per_pass`, `cooldown_days`, `max_proposals_per_pass`, `max_files`, `repro`, `auto_min_decided`, `auto_min_approval`, `auto_min_done`, `at` | Optional; enables `cardinal scout`. Every key except `at` is required; see Finding work. `at` is optional with no default: a host-local 24-hour `HH:MM` at which serve mode runs one pass daily. It cannot be combined with `cardinal scout --interval` |
 
 Environment variables:
 
