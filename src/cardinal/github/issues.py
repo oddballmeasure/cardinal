@@ -14,6 +14,14 @@ LABEL_STYLES = {
     "investigate": ("c5def5", "Cardinal needs research before coding"),
     "proposed": ("bfdadc", "Proposed by Cardinal's scout; swap for ready to approve, close to reject"),
 }
+# The scout's type labels, one per category; GitHub's own colors where it has the same label.
+TYPE_STYLES = {
+    "bug": ("d73a4a", "Scout: the code does something wrong"),
+    "regression": ("e99695", "Scout: a closed issue's behaviour is back"),
+    "docs": ("0075ca", "Scout: documentation contradicts the code"),
+    "enhancement": ("a2eeef", "Scout: a small improvement to behaviour that works"),
+    "feature": ("7057ff", "Scout: a missing behaviour the code half-supports"),
+}
 
 
 def view(repo: str, number: int) -> tuple[Issue, list[str], str]:
@@ -65,6 +73,13 @@ def set_state(repo: str, number: int, labels: Labels, target: str) -> None:
 def ensure_labels(repo: str, labels: Labels) -> None:
     for key, (color, description) in LABEL_STYLES.items():
         gh("label", "create", getattr(labels, key), "-R", repo, "--color", color, "--description", description, "--force")
+
+
+def ensure_type_labels(repo: str, labels: Labels, categories: list[str]) -> None:
+    for category in categories:
+        color, description = TYPE_STYLES[category]
+        gh("label", "create", labels.type_label(category), "-R", repo, "--color", color, "--description", description,
+           "--force")
 
 
 def create(repo: str, title: str, body: str, labels: tuple[str, ...] = ()) -> int:

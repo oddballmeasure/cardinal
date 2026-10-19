@@ -15,6 +15,7 @@ OBSERVABLE = re.compile(r'\d|`[^`]+`|"[^"]+"|\[\]|\{\}|\b(?:null|true|false)\b')
 MAX_SPAN = 40
 DRIFT = 10  # models miscount lines; a quote found this close to its cited range is the same evidence
 SIMILAR = 0.6
+DOCS = {".md", ".rst", ".txt", ".adoc"}
 
 
 def normalise(text: str) -> str:
@@ -76,9 +77,16 @@ def evidence_problem(worktree: Path, items: list[Evidence], tracked: set[str], r
     return None
 
 
+def docs_only(proposal: Proposal) -> bool:
+    """A fix that only changes prose: no test can fail on it, so there is nothing to reproduce."""
+    return all(Path(path).suffix.lower() in DOCS for path in proposal.files)
+
+
 def proposal_problem(worktree: Path, proposal: Proposal, tracked: set[str], repo: Repo, settings: Scout) -> str | None:
     if proposal.category not in settings.categories:
         return f"category {proposal.category} is not enabled"
+    if proposal.category == "docs" and not docs_only(proposal):
+        return "a docs proposal may change only documentation files"
     if len(set(proposal.files)) > settings.max_files:
         return f"a fix would change {len(set(proposal.files))} files; the limit is {settings.max_files}"
     for path in proposal.files:

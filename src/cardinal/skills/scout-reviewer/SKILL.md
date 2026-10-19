@@ -20,4 +20,9 @@ Verdicts:
 
 Documentation that contradicts the code is a real defect; a docs-only fix needs no test.
 
+`category`: leave it empty when the proposal's category fits. Otherwise name the one that does,
+using the scout skill's definitions (`bug`, `regression`, `docs`, `enhancement`, `feature`): a
+"bug" where nothing is wrong yet is an `enhancement`; a closed issue's behaviour come back is a
+`regression`. It becomes the issue's type label.
+
 `reason`: one or two sentences a person can check, naming the file and line that decided it.

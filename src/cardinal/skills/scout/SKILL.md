@@ -13,18 +13,27 @@ Returning `[]` is a good answer when nothing qualifies.
 ## What qualifies
 - Small: one behaviour, at most `max_files` files, testable with the repository's own suites
   (documentation fixes excepted).
-- A `bug` (the code does something wrong you can point at) or a small `feature` (a missing
-  behaviour the code clearly half-supports). Only the categories in `rules.json`.
+- One category, which becomes the issue's type label. Only the categories in `rules.json`:
+  - `bug`: the code does something wrong you can point at.
+  - `regression`: a bug a closed issue in `issues.json` already fixed or described, whose
+    behaviour you can still see in the code. Cite the closed issue in `problem`.
+  - `docs`: documentation that contradicts the code (see below). The fix changes only
+    documentation files.
+  - `enhancement`: behaviour that works but could be clearly better in one small, uncontroversial
+    way, such as an error message that hides the actual value or a missing input check that lets
+    a request fail later. Nothing in the code is wrong yet.
+  - `feature`: a missing behaviour the code clearly half-supports.
+  If it could be either, prefer `bug` over `enhancement` and `enhancement` over `feature`.
 - No config, environment, infrastructure, CI, dependency or migration changes.
 - Avoid billing, authentication, security logic and legal text.
 - A product decision (what the product *should* do, where reasonable people differ) is not a bug.
   Do not dress it up as one; the reviewer flags those for a person.
-- Documentation that contradicts the code is a `bug`: a wrong endpoint, field name, status or
+- Documentation that contradicts the code is `docs`: a wrong endpoint, field name, status or
   command in a README or schema. Say which side is wrong (usually the one the rest of the
-  repository disagrees with); a docs-only fix is fine and needs no test.
+  repository disagrees with); a docs-only fix is fine and needs no test. When the code is the
+  wrong side, it is a `bug`.
 - Not already an open issue in `issues.json`, and not like anything in `rejections.json`. A closed
-  issue whose behaviour you can still see in the code is a regression: propose it, citing the
-  closed issue in `problem`. Read each
+  issue whose behaviour you can still see in the code is a `regression`: propose it. Read each
   rejection reason: it says what this repository's owner does not want.
 
 ## Verify, then write

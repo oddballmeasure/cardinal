@@ -109,7 +109,9 @@ def model(context: dict):
         if title == MISCOUNTED.title:
             # Reviewer independently miscounts too: the final issue must use checked reviewer evidence.
             evidence = [Evidence(path=TEST_PATH, line_start=1, line_end=3, quote=MISCOUNTED.evidence[0].quote)]
-        review = ProposalReview(verdict=verdict, reason=reason, evidence=evidence)
+        # The survey called it a feature; the reviewer files it under the category that fits.
+        category = "enhancement" if title == MISCOUNTED.title else None
+        review = ProposalReview(verdict=verdict, reason=reason, evidence=evidence, category=category)
         return Scripted(messages=iter([
             call("read_file", {"file_path": "/skills/scout-reviewer/SKILL.md"}, "skill"),
             call("read_file", {"file_path": "/context/proposal.json"}, "proposal"),

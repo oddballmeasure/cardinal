@@ -1,10 +1,13 @@
 """What the scout's roles return. Code re-checks every claim it can (scout/checks.py)."""
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field, model_validator
 
-Category = Literal["bug", "feature"]
+# Each category is also the issue's type label (Labels.type_label) and its own autonomy track record.
+Category = Literal["bug", "regression", "docs", "enhancement", "feature"]
+CATEGORIES: tuple[str, ...] = get_args(Category)
+REPRO_CATEGORIES = frozenset({"bug", "regression"})  # wrong behaviour a test can show failing on base
 
 
 class Area(BaseModel):
@@ -43,6 +46,7 @@ class ProposalReview(BaseModel):
     verdict: Literal["confirmed", "wrong", "product_decision", "too_big", "duplicate"]
     reason: str = Field(min_length=10)
     evidence: list[Evidence] = Field(description="The evidence you re-derived from the code; required when confirmed")
+    category: Category | None = Field(default=None, description="The category that fits, only when the proposal's does not")
 
     @model_validator(mode="after")
     def confirmed_has_evidence(self) -> "ProposalReview":
