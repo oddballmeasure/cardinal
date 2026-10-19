@@ -7,10 +7,16 @@ import json
 import sqlite3
 import sys
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cardinal.logs.fingerprint import stamped
 from cardinal.logs.record import LogRecord
+
+
+def utc(at: datetime) -> datetime:
+    """`at` as a UTC instant, so the TEXT `logs.at` column orders by time; a naive `at` is taken as UTC."""
+    return at.replace(tzinfo=UTC) if at.tzinfo is None else at.astimezone(UTC)
 
 
 class Sink:
@@ -38,7 +44,7 @@ class Sink:
         self.db.execute(
             "INSERT OR IGNORE INTO logs (id, at, level, repo, component, event, failure_kind, fingerprint, run_id, record)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (record.id, record.at.isoformat(), record.level, record.source.repo, record.source.component,
+            (record.id, utc(record.at).isoformat(), record.level, record.source.repo, record.source.component,
              record.event, record.failure_kind, record.fingerprint, record.context.run_id, line),
         )
 
