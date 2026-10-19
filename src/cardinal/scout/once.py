@@ -4,7 +4,7 @@ Rules decide what is filed; models find and argue. A planner splits the reposito
 survey reads one area at a time, and an independent reviewer re-derives each proposal from the code.
 Code checks every quote and path, dedupes against the store and open issues, caps each pass and
 holds the overflow for the next. Filed issues carry `cardinal:proposed`, which the daemon ignores
-until a person swaps it for `cardinal:ready`.
+until a person swaps it for `cardinal:ready`, and a type label for their category (`cardinal:bug`).
 """
 
 import itertools
@@ -15,11 +15,10 @@ import time
 import uuid
 from collections import Counter
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from cardinal.agents.backends import under
 from cardinal.config.models import Config, Repo
-from cardinal.contracts.scout import Area, Proposal
+from cardinal.contracts.scout import REPRO_CATEGORIES, Area, Proposal
 from cardinal.github import issues
 from cardinal.github.gh import GhError
 from cardinal.graph.context import ScoutRun
@@ -31,7 +30,7 @@ from cardinal.repo.git import GitError, detached_worktree, ensure_clone, fetch_b
 from cardinal.roles import profiler, scout, scout_planner, scout_repro, scout_reviewer
 from cardinal.roles.tests import run_repo_tests
 from cardinal.scout import gate, outcomes, render
-from cardinal.scout.checks import evidence_problem, fingerprint, proposal_problem, similar
+from cardinal.scout.checks import docs_only, evidence_problem, fingerprint, proposal_problem, similar
 from cardinal.store import scout as store
 from cardinal.store.db import now
 from cardinal.store.recorder import Recorder
@@ -39,7 +38,6 @@ from cardinal.store.recorder import Recorder
 log = logging.getLogger(__name__)
 WINDOW_DAYS = outcomes.WINDOW_DAYS
 DEFAULT_INTERVAL = 86400
-DOCS = {".md", ".rst", ".txt", ".adoc"}
 
 
 def area_key(area: Area) -> str:
@@ -52,11 +50,6 @@ def choose(areas: list[Area], last: dict[str, str], cooldown_days: float, limit:
     unique = {area_key(area): area for area in reversed(areas)}
     fresh = [area for area in areas if unique.get(area_key(area)) is area and last.get(area_key(area), "") <= cutoff]
     return sorted(fresh, key=lambda area: last.get(area_key(area), ""))[:limit]
-
-
-def docs_only(proposal: Proposal) -> bool:
-    """A fix that only changes prose: no test can fail on it, so there is nothing to reproduce."""
-    return all(Path(path).suffix.lower() in DOCS for path in proposal.files)
 
 
 def failure_kind(exc: BaseException) -> FailureKind:
@@ -83,6 +76,7 @@ class Pass:
         decided = outcomes.track(repo, db)
         self.track_record = outcomes.track_record(db, repo.slug)
         issues.ensure_labels(repo.slug, repo.labels)  # lessons/labels-before-first-write.md
+        issues.ensure_type_labels(repo.slug, repo.labels, self.settings.categories)
         ensure_clone(run.clone, repo.url, repo.base_branch)
         self.base_sha = fetch_base(run.clone, run.clone, repo.base_branch)
         store.update_pass(db, run.run_id, base_sha=self.base_sha)
@@ -168,6 +162,13 @@ class Pass:
         review = scout_reviewer.review(run, proposal)
         if review.verdict not in ("confirmed", "product_decision"):
             return self.record(row_id, proposal, "dropped", verdict=review.verdict, reason=review.reason)
+        if review.category not in (None, proposal.category) and review.category in self.settings.categories:
+            log.info("reviewer recategorised %r as %s", proposal.title, review.category,
+                     extra={"event": "scout_recategorised", "data": {"from": proposal.category, "to": review.category}})
+            proposal = proposal.model_copy(update={"category": review.category})
+            if proposal.category == "docs" and not docs_only(proposal):
+                return self.record(row_id, proposal, "dropped", verdict=review.verdict,
+                                   reason="reviewer called it docs, but the fix changes more than documentation")
         evidence = proposal.evidence
         if review.verdict == "confirmed":
             problem = evidence_problem(run.worktree, review.evidence, self.tracked, repo)
@@ -175,7 +176,7 @@ class Pass:
                 return self.record(row_id, proposal, "dropped", verdict=review.verdict, reason=f"reviewer {problem}")
             evidence = review.evidence
         repro = None
-        if review.verdict == "confirmed" and proposal.category == "bug" and self.settings.repro and not docs_only(proposal):
+        if review.verdict == "confirmed" and proposal.category in REPRO_CATEGORIES and self.settings.repro and not docs_only(proposal):
             repro = scout_repro.reproduce(run, proposal, self.base_sha, self.base_green(), next(self.repros))
             run.recorder.event("scout", "repro", {"title": proposal.title, "ok": repro.ok, "reason": repro.reason})
             if repro.refuted:
@@ -187,7 +188,7 @@ class Pass:
         label = {"proposed": repo.labels.proposed, "auto": repo.labels.ready, "needs_human": repo.labels.needs_human}[mode]
         test_diff = repro.diff if repro and repro.ok else None
         text = render.body(proposal, evidence, review.reason, mode, why, repo.labels, fingerprint(proposal), test_diff)
-        number = issues.create(repo.slug, proposal.title, text, labels=(label,))
+        number = issues.create(repo.slug, proposal.title, text, labels=(label, repo.labels.type_label(proposal.category)))
         self.filed += 1
         self.issues.append({"number": number, "title": proposal.title, "state": "OPEN"})
         log.info("filed #%s as %s", number, mode, extra={"event": "scout_filed", "data": {"issue": number, "mode": mode}})
@@ -253,7 +254,7 @@ def status(config: Config, db: sqlite3.Connection, repo: Repo) -> dict:
     record = outcomes.track_record(db, repo.slug)
     categories = {}
     for category in config.scout.categories:
-        mode, why = gate.decide(config.scout, record, category, repro_ok=True)  # repro is judged per bug
+        mode, why = gate.decide(config.scout, record, category, repro_ok=True)  # repro is judged per proposal
         categories[category] = {**record.get(category, {}), "gate": mode, "why": why}
     return {"repo": repo.slug, "autonomy": config.scout.autonomy, "window_days": WINDOW_DAYS,
             "categories": categories, "open": undecided,

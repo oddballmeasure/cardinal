@@ -30,7 +30,7 @@ from cardinal_harness.offline import SLUG, expect, git, world
 from cardinal_harness.product import Product, json_file, product_env, run_bounded, write_config
 
 ROLES = ("orchestrator", "profiler", "coder", "verifier", "pr_manager", "deployer", "monitor", "scout", "scout_reviewer")
-SCOUT = {"autonomy": "propose", "categories": ["bug", "feature"], "areas_per_pass": 2, "cooldown_days": 7,
+SCOUT = {"autonomy": "propose", "categories": ["bug", "regression", "docs", "enhancement", "feature"], "areas_per_pass": 2, "cooldown_days": 7,
          "max_proposals_per_pass": 2, "max_files": 3, "repro": True, "auto_min_decided": 3,
          "auto_min_approval": 0.8, "auto_min_done": 0.7}
 
@@ -122,7 +122,7 @@ def scenario(temp: Path, artifact: Path) -> dict:
     expect(checks, "pass 1 surveys the first two areas", code == 0 and isinstance(first, dict)
            and first.get("areas") == ["input loading", "merchant filter"], first)
     expect(checks, "the real defect is filed as proposed with its checked evidence",
-           real.get("labels") == ["cardinal:proposed"] and "`ledger/records.py:8`" in real.get("body", "")
+           real.get("labels") == ["cardinal:proposed", "cardinal:bug"] and "`ledger/records.py:8`" in real.get("body", "")
            and "return json.loads(path.read_text())" in real.get("body", "") and "Cardinal-Scout: " in real.get("body", ""),
            real)
     expect(checks, "the defect's body carries the repro test that failed on base",
@@ -146,7 +146,7 @@ def scenario(temp: Path, artifact: Path) -> dict:
     code, drained = product("daemon", "--once", "--repo", SLUG)
     after = json.loads(state_path.read_text())
     expect(checks, "the daemon never picks up proposed issues", code == 0 and drained == []
-           and all(after["issues"][str(issue["number"])]["labels"] == ["cardinal:proposed"] for issue in proposed), drained)
+           and all(after["issues"][str(issue["number"])]["labels"] == issue["labels"] for issue in proposed), drained)
 
     approved, rejected = filed(after, scout_replay.MISSING_INPUT.title), filed(after, scout_replay.MIN_AMOUNT.title)
     after["issues"][str(approved.get("number"))]["labels"] = ["cardinal:ready"]
@@ -201,20 +201,23 @@ def scenario(temp: Path, artifact: Path) -> dict:
     expect(checks, "the filed issue cites the quote's actual line, not the reviewer's three-line span",
            "## Evidence\n`tests/test_cli.py:27` (lines corrected from 1-3)" in relocated.get("body", "")
            and scout_replay.MISCOUNTED.evidence[0].quote in relocated.get("body", ""), relocated)
+    expect(checks, "the reviewer's category correction becomes the type label",
+           relocated.get("labels") == ["cardinal:proposed", "cardinal:enhancement"] and "Category: enhancement" in
+           relocated.get("body", "") and corrected.get("category") == "enhancement", relocated)
     ambiguous = second_seen.get(scout_replay.AMBIGUOUS.title, {})
     expect(checks, "two out-of-window matches are dropped without a nearby match",
            ambiguous.get("action") == "dropped" and "does not contain the quoted text" in ambiguous.get("reason", "")
            and not filed(state, scout_replay.AMBIGUOUS.title), ambiguous)
     expect(checks, "auto: a bug with a track record and a failing repro is filed ready, saying why",
-           malformed.get("labels") == ["cardinal:ready"] and "Filed ready by Cardinal's scout: 4 decided bug" in
+           malformed.get("labels") == ["cardinal:ready", "cardinal:bug"] and "Filed ready by Cardinal's scout: 4 decided bug" in
            malformed.get("body", "") and "## Suggested test" in malformed.get("body", ""), malformed)
     expect(checks, "auto: a feature below its bars stays proposed",
-           count.get("labels") == ["cardinal:proposed"] and "not auto: 1 decided feature" in
+           count.get("labels") == ["cardinal:proposed", "cardinal:feature"] and "not auto: 1 decided feature" in
            second_seen.get(scout_replay.COUNT.title, {}).get("reason", ""), second_seen.get(scout_replay.COUNT.title))
     expect(checks, "repro worktrees are always removed",
            not [path.name for path in (product.home / "worktrees").rglob("scout-*")], list((product.home / "worktrees").rglob("*"))[:5])
     expect(checks, "the held product decision is filed for a person, not as work",
-           decision.get("labels") == ["cardinal:needs-human"] and "product decision" in decision.get("body", ""), decision)
+           decision.get("labels") == ["cardinal:needs-human", "cardinal:feature"] and "product decision" in decision.get("body", ""), decision)
 
     state["issues"][str(approved.get("number"))].update(labels=["cardinal:done"], state="CLOSED")
     json_file(state_path, state)

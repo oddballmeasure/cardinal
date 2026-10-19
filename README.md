@@ -83,7 +83,7 @@ commented example.
 | `[logging]` | `level`, `source_repo` | Required. `source_repo` is where Cardinal files its own defects |
 | `[[repos]]` | `slug`, `base_branch`, `test_command`, `required_checks`, `paths_off_limits`, `paths_hidden` | Required, one table per repository. `test_command` is an argv list (no shell) and is the only test oracle. `required_checks = []` merges without waiting for CI. Agents cannot change `paths_off_limits`, and can neither see nor change `paths_hidden` (for example a grader kept in the repository) |
 | | `remote_url`, `branch_prefix`, `retry_after_hours`, `focused_test_command`, `max_parallel_runs` | Optional. Defaults: `https://github.com/<slug>`, `cardinal`, no automatic retry (at least 24 when set), no `focused_test_command`, and `max_parallel_runs = 1`. `focused_test_command` is an argv list that runs one test and must contain `{test_path}` and/or `{test_name}`; only scout repro tests use it, and `test_command` stays the oracle. `max_parallel_runs` is how many issues the daemon works on at once (1-8) |
-| `[repos.labels]` | `ready`, `working`, `done`, `error`, `needs_human`, `investigate`, `proposed` | Optional renames of the `cardinal:*` labels |
+| `[repos.labels]` | `ready`, `working`, `done`, `error`, `needs_human`, `investigate`, `proposed`, `type_prefix` | Optional renames of the `cardinal:*` labels; `type_prefix` starts the scout's type labels |
 | `[repos.deploy]` | `transport`, `local_directory` | Optional. `local` or `ssh`; see Deployment |
 | `[limits]` | `recursion_limit`, `coder_attempts`, `verify_rounds`, `ci_repair_rounds`, `base_sync_rounds`, `test_timeout_seconds`, `ci_timeout_seconds`, `ci_poll_seconds`, `model_timeout_seconds` | Optional; defaults are in `examples/cardinal.toml` |
 | `[subscription]` | `max_five_hour_utilization` | Optional, `0 < x <= 1`. `claude-code:` sessions at or above this share of the five-hour window stop and wait for it to reset; see Running on a Claude Code subscription |
@@ -139,8 +139,19 @@ uv run cardinal scout status --repo owner/name     # track record and autonomy g
 
 A pass reads back what became of earlier proposals, then reuses the repository profile, has the
 `scout` model split the repository into areas, and surveys the `areas_per_pass` least recently
-surveyed ones (an area surveyed within `cooldown_days` is skipped). Each proposal is a `bug` or
-a small `feature`, written as observable behaviour with file and line evidence. Before anyone sees it:
+surveyed ones (an area surveyed within `cooldown_days` is skipped). Each proposal is written as
+observable behaviour with file and line evidence, in one of the enabled `categories`:
+
+| Category | Type label | Meaning |
+| --- | --- | --- |
+| `bug` | `cardinal:bug` | The code does something wrong |
+| `regression` | `cardinal:regression` | A closed issue's behaviour is back in the code |
+| `docs` | `cardinal:docs` | Documentation contradicts the code; the fix changes only documentation |
+| `enhancement` | `cardinal:enhancement` | Working behaviour, made clearly better in one small way |
+| `feature` | `cardinal:feature` | A missing behaviour the code half-supports |
+
+The reviewer may correct the category. The type label sits beside the state label and stays when
+the state changes; the prefix is `labels.type_prefix` (default `cardinal:`). Before anyone sees it:
 
 - **Code checks.** Every quote must be in the cited lines at the base commit. Evidence and the files
   a fix would change must be tracked, outside `paths_off_limits` and `paths_hidden`, and at most
@@ -150,7 +161,7 @@ a small `feature`, written as observable behaviour with file and line evidence. 
 - **Review.** The `scout_reviewer` model re-derives the claim from the code: `confirmed`, `wrong`,
   `too_big`, `duplicate`, or `product_decision`. Only confirmed proposals become work; product
   decisions are filed as `cardinal:needs-human` for a person.
-- **Repro.** With `repro = true`, a confirmed bug gets one new repository test, written in a
+- **Repro.** With `repro = true`, a confirmed bug or regression gets one new repository test, written in a
   scratch worktree. It must be the only change and must fail on a base whose suite is green. A
   test that passes drops the proposal; a failing one goes into the issue as "Suggested test".
 
@@ -161,8 +172,8 @@ both, and recent rejection reasons are given to the survey.
 
 With `autonomy = "auto"`, a proposal is filed straight to `cardinal:ready` only when its category
 has at least `auto_min_decided` decided proposals in the last 60 days, approval and done-rate (done
-among landed issues) at or above `auto_min_approval` and `auto_min_done`, and, for a bug, a repro
-test. The issue says why. Anything short of that is proposed, so a falling rate returns a category
+among landed issues) at or above `auto_min_approval` and `auto_min_done`, and, for a bug or
+regression, a repro test. The issue says why. Anything short of that is proposed, so a falling rate returns a category
 to propose-only by itself.
 
 **Running it daily.** Serve mode (no `--once`) repeats every `--interval` seconds counted from

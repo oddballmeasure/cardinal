@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cardinal.contracts.scout import Category
 from cardinal.home import SLUG
 
 PLACEHOLDER = re.compile(r"\{([^{}]*)\}")
@@ -56,9 +57,13 @@ class Labels(Strict):
     needs_human: str = "cardinal:needs-human"
     investigate: str = "cardinal:investigate"
     proposed: str = "cardinal:proposed"  # the scout's proposals; off the state axis, so the daemon ignores it
+    type_prefix: str = "cardinal:"  # + a scout category, e.g. cardinal:bug; off the state axis too
 
     def state_axis(self) -> list[str]:
         return [self.ready, self.working, self.done, self.error, self.needs_human, self.investigate]
+
+    def type_label(self, category: str) -> str:
+        return f"{self.type_prefix}{category}"
 
 
 class Logging(Strict):
@@ -88,12 +93,12 @@ class Scout(Strict):
     """`cardinal scout`: find, review and propose work. Every key is a decision; none defaults."""
 
     autonomy: Literal["propose", "auto"] = Field(description="auto lets a category with a track record file ready")
-    categories: list[Literal["bug", "feature"]] = Field(min_length=1)
+    categories: list[Category] = Field(min_length=1, description="What the scout may propose; each is a type label")
     areas_per_pass: int = Field(ge=1, le=6, description="Areas surveyed per pass; the oldest-surveyed go first")
     cooldown_days: float = Field(ge=0, description="An area surveyed this recently is skipped")
     max_proposals_per_pass: int = Field(ge=1, le=10, description="Issues filed per pass; the rest wait for the next")
     max_files: int = Field(ge=1, le=10, description="Files a proposal's fix may change")
-    repro: bool = Field(description="Bugs get a test that must fail on the base branch")
+    repro: bool = Field(description="Bugs and regressions get a test that must fail on the base branch")
     auto_min_decided: int = Field(ge=1, description="Proposals of a category approved or rejected in 60 days")
     auto_min_approval: float = Field(ge=0, le=1)
     auto_min_done: float = Field(ge=0, le=1, description="Share of a category's landed issues that ended done")
