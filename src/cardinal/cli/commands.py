@@ -203,5 +203,5 @@ def status(db, repo: str | None, issue: int | None, detail: bool):
         return rows
     if not rows:
         print("No runs recorded.", file=sys.stderr)
-    return [{key: row[key] for key in ("issue", "status", "failure_kind", "pr_url", "merge_sha", "started_at", "ended_at")}
+    return [{key: row[key] for key in ("repo", "issue", "status", "failure_kind", "pr_url", "merge_sha", "started_at", "ended_at")}
             for row in rows]
