@@ -88,9 +88,11 @@ class PRService:
         return f"error: {message}"
 
     def _open_pr(self) -> dict | None:
+        """The open PR from the pinned branch into the pinned base. A PR from the same head into
+        another base is not this branch's PR: it is never reused or merged."""
         prs = gh_json("pr", "list", "-R", self.repo, "--state", "open", "--head", self.branch,
                       "--json", "number,url,headRefOid,headRefName,baseRefName")
-        return prs[0] if prs else None
+        return next((pr for pr in prs if pr.get("baseRefName") == self.base), None)
 
     def tools(self) -> list:
         @tool("list_open_prs")
@@ -127,9 +129,12 @@ class PRService:
                 return self._violation(f"PR {number} is not this branch's PR")
             deadline = time.monotonic() + self.ci_timeout
             while True:
-                pr = gh_json("pr", "view", str(number), "-R", self.repo, "--json", "headRefOid,state,mergeable")
+                pr = gh_json("pr", "view", str(number), "-R", self.repo, "--json",
+                             "headRefOid,state,mergeable,baseRefName")
                 if pr["headRefOid"] != self.head_sha or pr["state"] != "OPEN":
                     return self._violation("the PR head or state changed while waiting for CI")
+                if pr.get("baseRefName") != self.base:
+                    return self._violation(f"the PR's base is {pr.get('baseRefName')}, not {self.base}")
                 # GitHub runs no pull_request CI on a conflicting PR, so waiting could only time out.
                 if pr["mergeable"] == "CONFLICTING":
                     self.ci_observations.append("conflict")
@@ -160,9 +165,12 @@ class PRService:
             with lock(self.clone, "merge"):
                 deadline = time.monotonic() + self.ci_timeout
                 while True:
-                    pr = gh_json("pr", "view", str(number), "-R", self.repo, "--json", "headRefOid,state,mergeable")
+                    pr = gh_json("pr", "view", str(number), "-R", self.repo, "--json",
+                                 "headRefOid,state,mergeable,baseRefName")
                     if pr["headRefOid"] != self.head_sha or pr["state"] != "OPEN":
                         return self._violation("the PR head or state changed before merging")
+                    if pr.get("baseRefName") != self.base:
+                        return self._violation(f"the PR's base is {pr.get('baseRefName')}, not {self.base}")
                     if pr["mergeable"] == "CONFLICTING":
                         self.ci_observations.append("conflict")
                         self.events.append({"action": "merge", "number": number, "status": "conflict"})
