@@ -8,6 +8,7 @@ on. Vendor output is dropped before a listing or search result is returned to th
 (lessons/exclude-vendor-before-returning.md).
 """
 
+import posixpath
 from pathlib import Path
 
 from deepagents.backends import CompositeBackend, FilesystemBackend
@@ -20,14 +21,23 @@ MAX_MATCHES = 200
 MAX_LINE = 400
 
 
+def normalised(path: str) -> str:
+    """Path relative to the mount root with `.` segments, `..` and repeated slashes resolved.
+
+    The vendor backend's resolution drops `.` segments, so `./hidden.txt` must compare like
+    `hidden.txt` here. The root ('' or '/') stays '' rather than becoming '.'.
+    """
+    return posixpath.normpath("/" + path.strip("/")).strip("/")
+
+
 def vendored(path: str) -> bool:
-    return any(part in VENDOR for part in path.strip("/").split("/"))
+    return any(part in VENDOR for part in normalised(path).split("/"))
 
 
 def under(path: str, prefixes: list[str]) -> bool:
     """True when path is one of the prefixes, or inside one of them."""
-    relative = path.strip("/")
-    cleaned = [prefix.strip("/") for prefix in prefixes if prefix.strip("/")]
+    relative = normalised(path)
+    cleaned = [normalised(prefix) for prefix in prefixes if normalised(prefix)]
     return any(relative == prefix or relative.startswith(prefix + "/") for prefix in cleaned)
 
 
