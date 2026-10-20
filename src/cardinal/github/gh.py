@@ -15,10 +15,12 @@ RETRYABLE_COMMANDS = {
     ("issue", "edit"), ("label", "create"), ("pr", "view"), ("pr", "list"),
     ("api",),
 }
-TRANSIENT = re.compile(r"something went wrong|\b(?:http\s*)?(?:500|502|503|504)\b|bad gateway|"
+# A 5xx code counts only in an HTTP status context ("HTTP 502", "HTTP/1.1 503", "502 Bad Gateway"):
+# a bare number may be data, such as the issue number in a GraphQL not-found error.
+TRANSIENT = re.compile(r"something went wrong|\bhttp(?:/\d(?:\.\d)?)?\s*(?:500|502|503|504)\b|bad gateway|"
                        r"internal server error|service unavailable|gateway timeout", re.IGNORECASE)
 PERMANENT = re.compile(r"\b(?:403|404)\b|permission denied|forbidden|validation failed|"
-                       r"unprocessable entity", re.IGNORECASE)
+                       r"unprocessable entity|could not resolve to", re.IGNORECASE)
 
 
 def _retryable(args: tuple[str, ...]) -> bool:
