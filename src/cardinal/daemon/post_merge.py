@@ -72,16 +72,33 @@ def judge(repo: Repo, db: sqlite3.Connection, row: sqlite3.Row) -> None:
         log.warning("re-ran %s failed on merge %s", failed, sha[:12],
                     extra={"event": "post_merge_rerun", "data": {"merge_sha": sha, "checks": failed, "runs": runs}})
         return
-    file_follow_up(repo, db, row, failed, rerun)
+    # Only failed Actions checks were re-run; any other failure was seen once and never retried.
+    repeated = [name for name in failed if name in actions] if rerun else []
+    file_follow_up(repo, db, row, failed, rerun, repeated)
 
 
-def file_follow_up(repo: Repo, db: sqlite3.Connection, row: sqlite3.Row, failed: list[str], rerun: list[int]) -> None:
+def _names(names: list[str]) -> str:
+    return ", ".join(f"`{name}`" for name in names)
+
+
+def file_follow_up(repo: Repo, db: sqlite3.Connection, row: sqlite3.Row, failed: list[str], rerun: list[int],
+                   repeated: list[str]) -> None:
+    """`repeated` names the failed checks that were re-run and failed again; the rest were never re-run."""
     sha, pr, issue = row["merge_sha"], row["pr_number"], row["issue"]
     looping = post_merge.is_follow_up(db, repo.slug, issue)
     label = repo.labels.needs_human if looping else repo.labels.ready
     title = f"CI failed on {repo.base_branch} after #{pr}: {', '.join(failed)}"
-    body = (f"Cardinal merged #{pr} (for #{issue}) as `{sha}`. Afterwards these checks failed on `{repo.base_branch}` "
-            f"at that commit{', and again when re-run' if rerun else ''}: {', '.join(f'`{name}`' for name in failed)}.\n\n"
+    once = [name for name in failed if name not in repeated]
+    intro = f"Cardinal merged #{pr} (for #{issue}) as `{sha}`. Afterwards "
+    if repeated and once:
+        summary = (f"these checks failed on `{repo.base_branch}` at that commit, and again when re-run: "
+                   f"{_names(repeated)}. These checks failed and were not re-run: {_names(once)}.")
+    elif repeated:
+        summary = (f"these checks failed on `{repo.base_branch}` at that commit, and again when re-run: "
+                   f"{_names(repeated)}.")
+    else:
+        summary = f"these checks failed on `{repo.base_branch}` at that commit: {_names(once)}."
+    body = (intro + summary + "\n\n"
             + (f"#{issue} was itself filed for a post-merge CI failure, so this needs a person.\n\n" if looping else "")
             + "```\n" + failure_log(repo.slug, sha, failed).replace("```", "'''") + "\n```\n")
     post_merge.record(db, repo.slug, sha, row["run_id"], "filing", rerun)  # a crash after this never files twice
