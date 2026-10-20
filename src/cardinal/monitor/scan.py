@@ -29,10 +29,13 @@ class Group:
 
 
 def new_groups(db: sqlite3.Connection, after: int) -> tuple[list[Group], int]:
-    """Fingerprints with serious records after the cursor, and the highest seq read."""
-    rows = db.execute("SELECT seq, fingerprint, repo FROM logs WHERE seq > ? AND level IN (?, ?) ORDER BY seq",
-                      (after, *SERIOUS)).fetchall()
+    """Fingerprints with serious records after the cursor, and the highest seq read.
+
+    The store is autocommit, so the two reads share no snapshot. Reading the top first and bounding the
+    rows by it means a record ingested mid-pass lands above the returned cursor and is read next pass."""
     top = db.execute("SELECT COALESCE(MAX(seq), ?) FROM logs", (after,)).fetchone()[0]
+    rows = db.execute("SELECT seq, fingerprint, repo FROM logs WHERE seq > ? AND seq <= ? AND level IN (?, ?)"
+                      " ORDER BY seq", (after, top, *SERIOUS)).fetchall()
     groups: dict[str, Group] = {}
     for row in rows:
         groups.setdefault(row["fingerprint"], Group(row["fingerprint"], row["repo"], row["seq"]))
