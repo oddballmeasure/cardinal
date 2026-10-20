@@ -24,6 +24,8 @@ def decide(settings: Scout, record: dict[str, dict], category: str, repro_ok: bo
         problems.append("no test that fails on the base branch")
     if problems:
         return "proposed", "not auto: " + "; ".join(problems)
+    landed = ("no landed issues" if counts["done_rate"] is None
+              else f"{counts['done_rate']:.0%} of landed ones done")
     return "auto", (f"{counts['decided']} decided {category} proposals in {WINDOW_DAYS} days, {counts['approval']:.0%} "
-                    f"approved, {counts['done_rate']:.0%} of landed ones done"
+                    f"approved, {landed}"
                     + (", and a test that fails on the base branch" if category in REPRO_CATEGORIES else ""))
