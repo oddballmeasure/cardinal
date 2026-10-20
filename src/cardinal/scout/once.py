@@ -191,6 +191,7 @@ class Pass:
         number = issues.create(repo.slug, proposal.title, text, labels=(label, repo.labels.type_label(proposal.category)))
         self.filed += 1
         self.issues.append({"number": number, "title": proposal.title, "state": "OPEN"})
+        run.write_context("issues.json", self.issues)  # later reviewers and surveys in this pass read it
         log.info("filed #%s as %s", number, mode, extra={"event": "scout_filed", "data": {"issue": number, "mode": mode}})
         notes = "; ".join(item for item in (why, repro and repro.reason) if item)
         self.record(row_id, proposal, "filed", verdict=review.verdict, filed_mode=mode, issue=number, reason=notes or None,
