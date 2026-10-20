@@ -88,12 +88,27 @@ def resume(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, numbe
         raise ValueError(f"Issue #{number} has no run waiting for a person")
     if not inputs.claim(db, repo.slug, number, row["run_id"]):
         raise ValueError(f"Issue #{number} is already claimed by another run")
+    marked_running = changing_label = False
     try:
         issue, _, _ = issues.view(repo.slug, number)
         runs.update(db, row["run_id"], status="running")
+        marked_running = True
+        changing_label = True
         issues.set_state(repo.slug, number, repo.labels, repo.labels.working)
-    except Exception:
-        inputs.release(db, repo.slug, number)
+    except BaseException:
+        # Put the run back where settle() left it, so the person can resume it again. A failed edit
+        # may have applied, so restore the needs-human label (best effort) before releasing the claim.
+        try:
+            if marked_running:
+                runs.update(db, row["run_id"], status="awaiting_human")
+            if changing_label:
+                try:
+                    issues.set_state(repo.slug, number, repo.labels, repo.labels.needs_human)
+                except Exception:
+                    log.exception("could not restore needs-human label after resume setup failed for #%s", number,
+                                  extra={"event": "resume_label_recovery_failed"})
+        finally:
+            inputs.release(db, repo.slug, number)
         raise
     run = Run(home, config, repo, db, Recorder(db, row["run_id"]), row["run_id"], issue)
     try:
