@@ -178,6 +178,12 @@ def finish_settled(repo: Repo, db: sqlite3.Connection, run_id: str, number: int)
                            f" (merge `{(row['merge_sha'] or '')[:12]}`).")
     elif row["status"] in ("awaiting_human", "rejected"):
         issues.set_state(repo.slug, number, labels, labels.needs_human)
+        if not any(body.startswith((NEEDS_DECISION, NOT_TAKING)) for body in issues.comment_bodies(repo.slug, number)):
+            settled = runs.settled_event(db, run_id) or {}
+            if row["status"] == "awaiting_human":
+                issues.comment(repo.slug, number, question_comment(number, settled.get("question") or ""))
+            else:
+                issues.comment(repo.slug, number, rejected_comment(settled.get("reason", "No reason recorded.")))
     elif row["status"] == "failed":
         issues.set_state(repo.slug, number, labels, labels.error)
         if not any(body.startswith(STOPPED_AT) for body in issues.comment_bodies(repo.slug, number)):
@@ -198,6 +204,21 @@ def stopped_comment(failure: dict) -> str:
     # Provider and crash detail stays in the store; the issue gets the category only.
     public = "" if kind in {"provider", "crash"} else ": " + (failure.get("detail") or "")[:600]
     return f"{STOPPED_AT} `{failure.get('stage', '?')}` ({kind}){public}"
+
+
+NEEDS_DECISION = "Cardinal needs a decision before continuing"
+NOT_TAKING = "Cardinal is not taking this issue:"
+
+
+def question_comment(number: int, question: str) -> str:
+    """The issue comment for a run that settled `awaiting_human`; settle() and finish_settled() share it."""
+    return (f"{NEEDS_DECISION}:\n\n> " + question.replace("\n", "\n> ")
+            + "\n\nAnswer with `cardinal resume " + str(number) + " --approve --note \"...\"` or `--reject`.")
+
+
+def rejected_comment(reason: str) -> str:
+    """The issue comment for a run that settled `rejected`; settle() and finish_settled() share it."""
+    return f"{NOT_TAKING} {reason}"
 
 
 def drive(run: Run, thread_id: str, payload, *, daemon: bool = False) -> dict:
@@ -236,7 +257,14 @@ def settle(run: Run, values: dict, paused: bool) -> dict:
     failure = values.get("failure") or {}
     runs.update(run.db, run.run_id, status=status, failure_kind=failure.get("kind"),
                 failure_detail=failure.get("detail"), ended_at=None if paused else now())
-    run.recorder.event("run", "settled", {"status": status, "failure": failure})
+    settled = {"status": status, "failure": failure}
+    question = values.get("question", "")
+    reason = (values.get("decision") or {}).get("reason", "No reason recorded.")
+    if status == "awaiting_human":
+        settled["question"] = question
+    elif status == "rejected":
+        settled["reason"] = reason
+    run.recorder.event("run", "settled", settled)
     log.info("run %s settled %s", run.run_id, status, extra={"event": "run_settled", "failure_kind": failure.get("kind"),
                                                              "data": {"status": status, "stage": failure.get("stage")}})
     if status == "done":
@@ -247,13 +275,10 @@ def settle(run: Run, values: dict, paused: bool) -> dict:
         remove_worktree(run.clone, run.worktree)
     elif status == "awaiting_human":
         issues.set_state(repo.slug, number, labels, labels.needs_human)
-        issues.comment(repo.slug, number, "Cardinal needs a decision before continuing:\n\n> "
-                       + values.get("question", "").replace("\n", "\n> ")
-                       + "\n\nAnswer with `cardinal resume " + str(number) + " --approve --note \"...\"` or `--reject`.")
+        issues.comment(repo.slug, number, question_comment(number, question))
     elif status == "rejected":
         issues.set_state(repo.slug, number, labels, labels.needs_human)
-        reason = (values.get("decision") or {}).get("reason", "No reason recorded.")
-        issues.comment(repo.slug, number, f"Cardinal is not taking this issue: {reason}")
+        issues.comment(repo.slug, number, rejected_comment(reason))
     else:
         issues.set_state(repo.slug, number, labels, labels.error)
         issues.comment(repo.slug, number, stopped_comment(failure))
