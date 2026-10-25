@@ -13,7 +13,8 @@ from cardinal.graph.context import Run
 from cardinal.repo.git import changed_files, head, patch
 from cardinal.roles.tests import run_repo_tests, summary
 
-TEST_PATH = re.compile(r"(^|/)(tests?|e2e|__tests__|spec)/|(^|/)test_[^/]+$|_test\.[^/]+$|\.(test|spec)\.[^/]+$")
+TEST_PATH = re.compile(
+    r"(^|/)(tests?|e2e|__tests__|spec)/|(^|/)test_[^/]+$|(^|/)tests\.py$|_test\.[^/]+$|\.(test|spec)\.[^/]+$")
 
 
 def is_test_path(path: str) -> bool:
