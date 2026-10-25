@@ -14,7 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 from cardinal.config.models import Repo
 from cardinal.github import issues
-from cardinal.github.gh import gh
+from cardinal.github.gh import GhError, gh
 from cardinal.github.prs import PASSED, failure_log, latest_runs
 from cardinal.store import post_merge
 
@@ -65,15 +65,30 @@ def judge(repo: Repo, db: sqlite3.Connection, row: sqlite3.Row) -> None:
                if (match := ACTIONS_RUN.search(checks[name].get("details_url") or ""))}
     runs = sorted(set(actions.values()))
     if not rerun and runs:
+        rerun_runs = set()
         for number in runs:
-            gh("run", "rerun", number, "--failed", "-R", repo.slug)
+            try:
+                gh("run", "rerun", number, "--failed", "-R", repo.slug)
+            except GhError:  # e.g. a token without actions write; judged as never re-run instead of retried
+                log.exception("could not re-run workflow run %s on merge %s", number, sha[:12],
+                              extra={"event": "post_merge_rerun_failed", "data": {"merge_sha": sha, "run": number}})
+            else:
+                rerun_runs.add(number)
+        if not rerun_runs:
+            file_follow_up(repo, db, row, failed, [], [])
+            return
         # Only re-run checks get replaced; waiting on any other failed check would block until GIVE_UP.
-        post_merge.record(db, repo.slug, sha, run_id, "rerun", [checks[name]["id"] for name in actions])
+        not_rerun = [name for name in actions if actions[name] not in rerun_runs]
+        post_merge.record(db, repo.slug, sha, run_id, "rerun",
+                          [checks[name]["id"] for name in actions if actions[name] in rerun_runs],
+                          not_rerun=not_rerun)
         log.warning("re-ran %s failed on merge %s", failed, sha[:12],
-                    extra={"event": "post_merge_rerun", "data": {"merge_sha": sha, "checks": failed, "runs": runs}})
+                    extra={"event": "post_merge_rerun",
+                           "data": {"merge_sha": sha, "checks": failed, "runs": sorted(rerun_runs)}})
         return
-    # Only failed Actions checks were re-run; any other failure was seen once and never retried.
-    repeated = [name for name in failed if name in actions] if rerun else []
+    # Only failed Actions checks whose re-run was requested were retried; any other failure was seen once.
+    not_rerun = set(json.loads(row["not_rerun"] or "[]")) if "not_rerun" in row.keys() else set()
+    repeated = [name for name in failed if name in actions and name not in not_rerun] if rerun else []
     file_follow_up(repo, db, row, failed, rerun, repeated)
 
 

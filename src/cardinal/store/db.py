@@ -31,7 +31,8 @@ def connect(path: Path) -> sqlite3.Connection:
 def migrate(connection: sqlite3.Connection) -> None:
     """Columns added after a table first shipped; CREATE TABLE IF NOT EXISTS leaves old tables as they were."""
     for table, columns in (("claims", (("host", "TEXT"), ("pid", "INTEGER"))),
-                           ("agent_calls", (("model", "TEXT"), ("window", "TEXT"), ("utilization", "REAL")))):
+                           ("agent_calls", (("model", "TEXT"), ("window", "TEXT"), ("utilization", "REAL"))),
+                           ("post_merge", (("not_rerun", "TEXT"),))):
         have = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
         for column, kind in columns:
             if column not in have:
