@@ -141,6 +141,8 @@ def check_result(home: Home, config, repo) -> dict:
     probe("base branch", lambda: _base(home, repo))
     probe("labels", lambda: issues.ensure_labels(repo.slug, repo.labels))
     probe("test command", lambda: _executable(repo.test_command[0]))
+    if repo.focused_test_command is not None:
+        probe("focused test command", lambda: _executable(repo.focused_test_command[0]))
     for role, spec in config.models.model_dump(exclude_none=True).items():
         probe(f"model {role}", lambda spec=spec: _model_key(spec, config.ceiling))
     failed = any(value.startswith("FAILED") for value in results.values())
