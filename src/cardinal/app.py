@@ -153,6 +153,16 @@ def abandon(repo: Repo, db: sqlite3.Connection, claim: sqlite3.Row) -> dict:
     """Settle a run whose process died without settling (SIGKILL, out of memory): its claim would
     otherwise hold the issue forever. Its worktree stays; a later run of the issue replaces it."""
     number, run_id = claim["issue"], claim["run_id"]
+    if runs.is_settled(db, run_id):
+        # The process died after settle() recorded the outcome: keep it, finish only what is missing.
+        with bind(run_id=run_id, issue=number):
+            try:
+                finish_settled(repo, db, run_id, number)
+            finally:
+                inputs.release(db, repo.slug, number)
+        settled = runs.settled_event(db, run_id) or {}
+        return {"run_id": run_id, "issue": number, "status": runs.get(db, run_id)["status"],
+                "failure": settled.get("failure") or None}
     detail = f"The process running this issue (pid {claim['pid']}) died without settling"
     failure = {"kind": FailureKind.CRASH.value, "stage": "abandoned", "detail": detail}
     with bind(run_id=run_id, issue=number):
