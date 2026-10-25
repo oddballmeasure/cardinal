@@ -80,12 +80,13 @@ def confirm_focused(run: ScoutRun, worktree: Path, base_sha: str, result: ReproR
     """Run only the new test. It confirms the bug only by failing visibly, by name, within the time limit."""
     command = focused_command(focused, result.test_path, result.test_name)
     evidence = run_repo_tests(worktree, command, run.config.limits.test_timeout_seconds)
-    if evidence.passed:
-        return Repro(False, True, f"{result.test_name} passes on the base branch: the bug did not reproduce")
     if evidence.timed_out:
         return Repro(False, False, f"the focused run of {result.test_name} timed out")
+    # Some runners print "no tests found" and still exit 0; a run that ran nothing refutes nothing.
     if ran_no_tests(evidence):
         return Repro(False, False, f"the focused run ran no tests, so it does not show {result.test_name} failing")
+    if evidence.passed:
+        return Repro(False, True, f"{result.test_name} passes on the base branch: the bug did not reproduce")
     # The command itself names the test, so only the run's output counts as naming it.
     if result.test_name not in evidence.stdout_tail + evidence.stderr_tail:
         return Repro(False, False, f"the focused run failed, but not visibly on {result.test_name}")
