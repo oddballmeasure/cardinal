@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class HealthConfig(BaseModel):
@@ -8,6 +8,13 @@ class HealthConfig(BaseModel):
     expected_stdout: str = Field(min_length=1)
     timeout_seconds: float = Field(gt=0)
     interval_seconds: float = Field(gt=0)
+
+    @field_validator("expected_stdout")
+    @classmethod
+    def _expected_stdout_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("expected_stdout must contain non-whitespace text")
+        return value
 
 
 class DeployConfig(BaseModel):
