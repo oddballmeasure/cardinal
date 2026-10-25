@@ -1,5 +1,6 @@
 """POST /v1/records must answer a bad Content-Length with 400 and a JSON error, never drop the
-connection or read until EOF."""
+connection or read until EOF. It accepts a JSON array, NDJSON, or one JSON object on one line or
+several."""
 
 import json
 import socket
@@ -8,6 +9,7 @@ import threading
 import uuid
 from datetime import UTC, datetime
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
@@ -15,12 +17,14 @@ from cardinal.ingest.server import MAX_BODY, handler_for
 from cardinal.logs.sink import Sink
 
 TOKEN = "ingest-token"
+EXAMPLE_RECORD = Path(__file__).resolve().parents[2] / "examples" / "log-record.json"
+REPOS = {"example/app", "oddballmeasure/cardinal_test_repo"}
 
 
 @pytest.fixture
 def server(tmp_path):
     sink = Sink(tmp_path / "logs", sqlite3.connect(":memory:", check_same_thread=False))
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(TOKEN, {"example/app"}, sink))
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(TOKEN, REPOS, sink))
     httpd.daemon_threads = True
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -80,6 +84,49 @@ def test_ingest_valid_ndjson_still_accepted(server):
     status, reply = raw_post(server, str(len(body)), body)
     assert status == 200, reply
     assert json.loads(reply)["accepted"] == 1
+
+
+def stored(tmp_path: Path) -> list[dict]:
+    return [json.loads(line) for path in sorted((tmp_path / "logs").glob("*.jsonl"))
+            for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_ingest_accepts_example_record_multiline_as_is(server, tmp_path):
+    body = EXAMPLE_RECORD.read_bytes()
+    assert body.count(b"\n") > 1, "the example record should be pretty-printed across lines"
+    status, reply = raw_post(server, str(len(body)), body)
+    assert status == 200, reply
+    assert json.loads(reply) == {"accepted": 1, "rejected": []}
+    records = stored(tmp_path)
+    assert len(records) == 1
+    assert records[0]["source"]["repo"] == "oddballmeasure/cardinal_test_repo"
+    assert records[0]["message"] == "GET /stats/tags raised ZeroDivisionError"
+
+
+def test_ingest_two_ndjson_lines_both_accepted(server, tmp_path):
+    lines = [json.dumps({"schema_version": 1, "level": "error", "event": "request_failed", "message": f"m{i}",
+                         "source": {"repo": "example/app", "component": "api"}}) for i in range(2)]
+    body = "\n".join(lines).encode()
+    status, reply = raw_post(server, str(len(body)), body)
+    assert status == 200, reply
+    assert json.loads(reply)["accepted"] == 2
+    assert sorted(r["message"] for r in stored(tmp_path)) == ["m0", "m1"]
+
+
+def test_ingest_json_array_still_accepted(server):
+    record = {"schema_version": 1, "level": "error", "event": "request_failed", "message": "m",
+              "source": {"repo": "example/app", "component": "api"}}
+    body = json.dumps([record, record], indent=2).encode()
+    status, reply = raw_post(server, str(len(body)), body)
+    assert status == 200, reply
+    assert json.loads(reply)["accepted"] == 2
+
+
+@pytest.mark.parametrize("body", [b"not json", b"[1, 2", b"{\n  \"level\": \n"])
+def test_ingest_non_json_body_still_400(server, body):
+    status, reply = raw_post(server, str(len(body)), body)
+    assert status == 400, reply
+    assert json.loads(reply)["error"].startswith("body is not JSON or NDJSON")
 
 
 def test_ingest_content_length_over_max_body_still_413(server):

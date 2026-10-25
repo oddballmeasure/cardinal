@@ -18,9 +18,16 @@ MAX_BODY = 5_000_000
 
 
 def parse(body: bytes) -> list:
+    """A JSON array, one JSON object (on one line or several), or NDJSON (one object per line)."""
     text = body.decode("utf-8").strip()
     if text.startswith("["):
         return json.loads(text)
+    try:
+        whole = json.loads(text)
+    except json.JSONDecodeError:
+        whole = None  # e.g. NDJSON's "Extra data": parse it line by line below
+    if isinstance(whole, dict):
+        return [whole]
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
