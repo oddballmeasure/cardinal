@@ -71,15 +71,24 @@ def start(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, number
             inputs.release(db, repo.slug, number)
         raise
     run = Run(home, config, repo, db, Recorder(db, run_id), run_id, issue)
+    keep_claim = False
     try:
         run.recorder.event("run", "started", {"issue": issue.model_dump(), "thread_id": thread_id})
         return drive(run, thread_id, {"status": "running"}, daemon=daemon)
     except (KeyboardInterrupt, SystemExit):
         if daemon:
-            interrupt(repo, db, run_id, number)
+            try:
+                interrupt(repo, db, run_id, number)
+            except Exception:
+                # A daemon stop always wins. Keep the claim, as interrupt() promises, so the next
+                # daemon's orphaned-claim recovery settles the issue the label work could not.
+                keep_claim = True
+                log.exception("could not restore labels after daemon stop for #%s", number,
+                              extra={"event": "interrupt_label_recovery_failed"})
         raise
     finally:
-        inputs.release(db, repo.slug, number)
+        if not keep_claim:
+            inputs.release(db, repo.slug, number)
 
 
 def resume(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, number: int, action: str, note: str) -> dict:
