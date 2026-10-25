@@ -80,6 +80,10 @@ class PRService:
         self.merge_sha: str | None = None
         self.ci_observations: list[str] = []
         self.failed_checks: list[str] = []
+        # Why the last "timeout" happened: "checks" when a required check was still missing or running at
+        # the deadline, "mergeable" when the checks had passed and only GitHub's mergeable state stalled.
+        self.timeout_reason: str | None = None
+        self.last_mergeable: str | None = None
         self.events: list[dict] = []
         self.violations: list[str] = []
 
@@ -140,7 +144,9 @@ class PRService:
                     self.ci_observations.append("conflict")
                     self.events.append({"action": "ci", "status": "conflict"})
                     return json.dumps({"status": "conflict", "head_sha": self.head_sha, "base": self.base})
-                status, self.failed_checks = check_state(self.repo, self.head_sha, self.required)
+                checks, self.failed_checks = check_state(self.repo, self.head_sha, self.required)
+                self.last_mergeable = pr["mergeable"]
+                status = checks
                 if status == "success" and pr["mergeable"] != "MERGEABLE":
                     status = "pending"  # mergeable is computed lazily; UNKNOWN settles after a while
                 self.ci_observations.append(status)
@@ -149,6 +155,7 @@ class PRService:
                     return json.dumps({"status": status, "head_sha": self.head_sha, "checks": self.required,
                                        "failed_checks": self.failed_checks})
                 if time.monotonic() >= deadline:
+                    self.timeout_reason = "mergeable" if checks == "success" else "checks"
                     self.ci_observations.append("timeout")
                     return json.dumps({"status": "timeout", "head_sha": self.head_sha})
                 time.sleep(self.poll_seconds)
@@ -175,9 +182,12 @@ class PRService:
                         self.ci_observations.append("conflict")
                         self.events.append({"action": "merge", "number": number, "status": "conflict"})
                         return json.dumps({"merged": False, "status": "conflict", "base": self.base})
+                    self.last_mergeable = pr["mergeable"]
                     if pr["mergeable"] == "MERGEABLE":
                         break
                     if time.monotonic() >= deadline:
+                        # CI already succeeded before this poll began; only mergeability can stall here.
+                        self.timeout_reason = "mergeable"
                         self.ci_observations.append("timeout")
                         return json.dumps({"merged": False, "status": "timeout"})
                     time.sleep(self.poll_seconds)

@@ -57,5 +57,10 @@ def land(run: Run, verdict: Verdict) -> PRResult:
     if last == "conflict":
         raise BaseConflict(f"PR #{result.number} conflicts with {run.repo.base_branch} at {verdict.head_sha[:12]}")
     if last == "timeout":
+        if service.timeout_reason == "mergeable":
+            raise StageFailure(FailureKind.CI_TIMEOUT,
+                               f"The required checks passed, but PR #{result.number}'s mergeable state stayed "
+                               f"{service.last_mergeable} and did not become MERGEABLE within "
+                               f"{limits.ci_timeout_seconds}s")
         raise StageFailure(FailureKind.CI_TIMEOUT, f"Required checks did not finish within {limits.ci_timeout_seconds}s")
     raise StageFailure(FailureKind.PR_VIOLATION, f"The PR manager stopped with the PR {result.status}")
