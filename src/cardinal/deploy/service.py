@@ -60,7 +60,7 @@ class DeploymentService:
                 remaining = max(0.01, remaining - (time.monotonic() - self.health_started))
             result = self.host.check(remaining)
             self.last_poll = time.monotonic()
-            healthy = result.exit_code == 0 and result.stdout.strip() == self.config.health.expected_stdout
+            healthy = result.exit_code == 0 and result.stdout.strip() == self.config.health.expected_stdout.strip()
             observation = HealthObservation(**result.model_dump(), healthy=healthy)
             self.observations.append(observation)
             self.events.append({"action": "check_health", **observation.model_dump()})
