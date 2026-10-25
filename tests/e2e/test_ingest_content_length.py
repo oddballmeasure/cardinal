@@ -133,3 +133,62 @@ def test_ingest_content_length_over_max_body_still_413(server):
     status, reply = raw_post(server, str(MAX_BODY + 1))
     assert status == 413, reply
     assert "error" in json.loads(reply)
+
+
+def read_reply(conn: socket.socket) -> tuple[int | None, bytes]:
+    data = b""
+    try:
+        while b"\r\n\r\n" not in data:
+            chunk = conn.recv(65536)
+            if not chunk:
+                return None, data
+            data += chunk
+        head, _, rest = data.partition(b"\r\n\r\n")
+        length = 0
+        for line in head.split(b"\r\n")[1:]:
+            name, _, value = line.partition(b":")
+            if name.strip().lower() == b"content-length":
+                length = int(value.strip())
+        while len(rest) < length:
+            chunk = conn.recv(65536)
+            if not chunk:
+                break
+            rest += chunk
+        return int(head.split(b"\r\n")[0].split()[1]), rest
+    except TimeoutError:
+        return None, data
+
+
+def test_ingest_missing_content_length_refused_with_411(tmp_path):
+    from cardinal.store.db import connect
+
+    db = connect(tmp_path / "store.db")
+    sink = Sink(tmp_path / "logs", db)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(TOKEN, {"example/app"}, sink))
+    httpd.daemon_threads = True
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    port = httpd.server_port
+    try:
+        record = {"schema_version": 1, "id": uuid.uuid4().hex, "at": datetime.now(UTC).isoformat(),
+                  "level": "error", "event": "request_failed", "message": "request_failed error",
+                  "source": {"repo": "example/app", "component": "api"}}
+        payload = (json.dumps(record) + "\n").encode()
+        chunked = f"{len(payload):x}\r\n".encode() + payload + b"\r\n0\r\n\r\n"
+        request = (f"POST /v1/records HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {TOKEN}\r\n"
+                   "Content-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\n"
+                   "Connection: keep-alive\r\n\r\n").encode() + chunked
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as conn:
+            conn.sendall(request)
+            status, body = read_reply(conn)
+            assert status == 411, f"no Content-Length: expected 411, got status={status}, body={body!r}"
+            assert "Content-Length" in json.loads(body)["error"]
+            assert conn.recv(65536) == b"", "the server should close the connection after a 411"
+        assert db.execute("SELECT COUNT(*) FROM logs").fetchone()[0] == 0
+
+        status, body = raw_post(port, "0")
+        assert status == 200, body
+        assert json.loads(body) == {"accepted": 0, "rejected": []}
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+        db.close()

@@ -55,7 +55,13 @@ def handler_for(token: str, repos: set[str], sink: Sink):
             given = self.headers.get("Authorization", "").removeprefix("Bearer ")
             if not hmac.compare_digest(given.encode(), token.encode()):
                 return self.reply(401, {"error": "missing or wrong bearer token"})
-            raw_length = (self.headers.get("Content-Length") or "0").strip()
+            header = self.headers.get("Content-Length")
+            if header is None:
+                # No length (e.g. Transfer-Encoding: chunked): the body cannot be read or skipped, so
+                # refuse it rather than answer 200 for records never read, and close the connection.
+                self.close_connection = True
+                return self.reply(411, {"error": "Content-Length header is required"})
+            raw_length = header.strip() or "0"
             if not (raw_length.isascii() and raw_length.isdigit()):
                 # The body length is unknown, so the body cannot be skipped: close the connection.
                 self.close_connection = True
