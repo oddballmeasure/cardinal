@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS post_merge (
     rerun_checks TEXT NOT NULL,        -- JSON ids of the failed check runs that were re-run
     follow_up INTEGER,                 -- the issue filed for checks that failed twice
     updated_at TEXT NOT NULL,
+    not_rerun TEXT,                    -- JSON names of failed Actions checks whose re-run request failed
     PRIMARY KEY (repo, merge_sha)
 );
 
