@@ -43,10 +43,13 @@ def new_groups(db: sqlite3.Connection, after: int) -> tuple[list[Group], int]:
 
 
 def fill(db: sqlite3.Connection, group: Group, settings: Monitor) -> Group:
-    """Count the fingerprint across the whole window, not just since the cursor."""
+    """Count the fingerprint across the whole window, not just since the cursor.
+
+    Rows are ordered by record time (`at` is normalised UTC ISO text), not ingest order, so first/last
+    seen span the records by time and the sample is the latest record even when records arrive late."""
     since = (datetime.now(UTC) - timedelta(hours=settings.window_hours)).isoformat()
     rows = db.execute("SELECT at, level, failure_kind, run_id, record FROM logs WHERE fingerprint = ? AND at >= ?"
-                      " AND level IN (?, ?) ORDER BY seq", (group.fingerprint, since, *SERIOUS)).fetchall()
+                      " AND level IN (?, ?) ORDER BY at, seq", (group.fingerprint, since, *SERIOUS)).fetchall()
     group.count = len(rows)
     if rows:
         group.first_seen, group.last_seen = rows[0]["at"], rows[-1]["at"]
