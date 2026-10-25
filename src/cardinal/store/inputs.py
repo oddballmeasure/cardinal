@@ -33,6 +33,11 @@ def claim(db: sqlite3.Connection, repo: str, issue: int, run_id: str) -> bool:
     return cursor.rowcount == 1
 
 
+def claimed(db: sqlite3.Connection, repo: str, issue: int) -> bool:
+    """True while any run holds a claim on the issue, whatever its host or pid."""
+    return db.execute("SELECT 1 FROM claims WHERE repo = ? AND issue = ? LIMIT 1", (repo, issue)).fetchone() is not None
+
+
 def orphaned_claims(db: sqlite3.Connection, repo: str) -> list[sqlite3.Row]:
     """Claims held by a process on this host that no longer exists (killed, out of memory): nothing
     will ever release them. Claims from other hosts, or from before owners were recorded, are left."""

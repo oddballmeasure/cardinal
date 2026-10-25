@@ -11,6 +11,7 @@ from cardinal.daemon import post_merge, workers
 from cardinal.github import issues
 from cardinal.graph.failures import FailureKind
 from cardinal.home import Home
+from cardinal.logs.context import bind
 from cardinal.store import inputs, runs
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,30 @@ def retry_sweep(repo: Repo, db: sqlite3.Connection) -> list[int]:
     return requeued
 
 
+def settled_label_sweep(repo: Repo, db: sqlite3.Connection) -> list[int]:
+    """Finish the label and comment of open issues still labelled working whose latest run settled
+    but whose settle() label edit failed: the claim was released, so no other sweep would see them.
+    The run row is left as settled; finish_settled() never posts a comment twice."""
+    repaired = []
+    for number in issues.with_label(repo.slug, repo.labels.working):
+        if inputs.claimed(db, repo.slug, number):
+            continue  # a live run (or the orphaned-claim sweep) owns this issue
+        row = runs.latest(db, repo.slug, number)
+        if row is None or not runs.is_settled(db, row["run_id"]):
+            continue
+        with bind(run_id=row["run_id"], issue=number):
+            try:
+                app.finish_settled(repo, db, row["run_id"], number)
+            except Exception:  # noqa: BLE001 - one issue that cannot be repaired must not stop the poll
+                log.exception("could not finish the label of settled issue #%s", number,
+                              extra={"event": "settled_label_repair_failed", "data": {"issue": number}})
+                continue
+            log.info("finished the label of settled issue #%s", number,
+                     extra={"event": "settled_label_repaired", "data": {"issue": number, "status": row["status"]}})
+        repaired.append(number)
+    return repaired
+
+
 def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, verbose: int = 0) -> list[dict]:
     """Run every ready issue, re-polling after each so work labelled meanwhile (including a follow-up
     filed for a failed merge) is included. CI on earlier merges is judged before each claim: a queue of
@@ -42,6 +67,8 @@ def drain(home: Home, config: Config, repo: Repo, db: sqlite3.Connection, verbos
     issues.ensure_labels(repo.slug, repo.labels)
     # A run killed outright (SIGKILL, out of memory) never releases its claim; settle it as failed.
     results: list[dict] = [app.abandon(repo, db, claim) for claim in inputs.orphaned_claims(db, repo.slug)]
+    # A settle() whose label edit failed released its claim with the issue still labelled working.
+    settled_label_sweep(repo, db)
     requeued = retry_sweep(repo, db)
     if requeued:
         log.info("requeued %s after their retry window", requeued, extra={"event": "retry_requeued",
