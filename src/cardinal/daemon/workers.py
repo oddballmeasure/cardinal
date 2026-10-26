@@ -84,11 +84,26 @@ def parallel(home: Home, repo: Repo, db: sqlite3.Connection, verbose: int) -> li
                 if time.monotonic() - judged >= JUDGE_EVERY:
                     post_merge.judge_all(repo, db)
                     judged = time.monotonic()
-                pending = [number for number in issues.ready(repo.slug, repo.labels.ready) if number not in attempted]
+                try:
+                    ready = issues.ready(repo.slug, repo.labels.ready)
+                except Exception:  # noqa: BLE001 - a failed poll must not stop the workers already running
+                    log.exception("ready-queue poll failed for %s; retrying in %ss", repo.slug, TICK,
+                                  extra={"event": "ready_poll_failed", "data": {"repo": repo.slug}})
+                    if not running:
+                        return results  # nothing to keep alive: the daemon polls again after its interval
+                    time.sleep(TICK)
+                    continue
+                pending = [number for number in ready if number not in attempted]
                 for number in pending:
                     if len(running) >= repo.max_parallel_runs:
                         break
-                    blocker = waits_on(repo, number, (set(running) | set(pending)) - {number}, bodies)
+                    try:
+                        blocker = waits_on(repo, number, (set(running) | set(pending)) - {number}, bodies)
+                    except Exception:  # noqa: BLE001 - retried on a later tick; running workers carry on
+                        log.exception("could not read issue #%s to check its dependencies; retrying later", number,
+                                      extra={"event": "dependency_lookup_failed",
+                                             "data": {"repo": repo.slug, "issue": number}})
+                        continue
                     # With nothing running, a blocker can never settle (a dependency cycle): start anyway.
                     if blocker is not None and running:
                         continue
