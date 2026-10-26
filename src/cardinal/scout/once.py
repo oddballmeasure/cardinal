@@ -124,9 +124,11 @@ class Pass:
             store.update_pass(self.run.db, self.run.run_id, baseline_passed=int(self.green))
         return self.green
 
-    def record(self, row_id: int | None, proposal: Proposal, status: str, **fields: object) -> None:
-        store.record(self.run.db, row_id, repo=self.slug, pass_id=self.run.run_id, fingerprint=fingerprint(proposal),
-                     proposal=proposal.model_dump(), status=status, **fields)
+    def record(self, row_id: int | None, proposal: Proposal, status: str, *, key: str | None = None,
+               **fields: object) -> None:
+        """`key` overrides the row's fingerprint: a recategorised proposal keeps the one it was surveyed under."""
+        store.record(self.run.db, row_id, repo=self.slug, pass_id=self.run.run_id,
+                     fingerprint=key or fingerprint(proposal), proposal=proposal.model_dump(), status=status, **fields)
         self.results.append({"title": proposal.title, "category": proposal.category, "action": status,
                              **{key: value for key, value in fields.items() if value is not None}})
 
@@ -152,49 +154,53 @@ class Pass:
         if self.filed >= self.settings.max_proposals_per_pass:
             return self.record(row_id, proposal, "held", reason=f"this pass already filed {self.filed}")
         try:
-            self.weigh(proposal, row_id)
+            self.weigh(proposal, row_id, key)
         except Exception as exc:  # noqa: BLE001 - one proposal failing must not stop the rest; it is weighed again next pass
             log.error("could not weigh proposal %r", proposal.title, exc_info=exc, extra={"event": "scout_proposal_failed"})
             self.record(row_id, proposal, "held", reason=f"{type(exc).__name__}: {str(exc)[:300]}")
 
-    def weigh(self, proposal: Proposal, row_id: int | None) -> None:
+    def weigh(self, proposal: Proposal, row_id: int | None, key: str | None = None) -> None:
+        """`key` is the fingerprint as surveyed; every row keeps it, so dedupe still matches after recategorisation."""
         run, repo = self.run, self.run.repo
+        key = key or fingerprint(proposal)
         review = scout_reviewer.review(run, proposal)
         if review.verdict not in ("confirmed", "product_decision"):
-            return self.record(row_id, proposal, "dropped", verdict=review.verdict, reason=review.reason)
+            return self.record(row_id, proposal, "dropped", key=key, verdict=review.verdict, reason=review.reason)
         if review.category not in (None, proposal.category) and review.category in self.settings.categories:
             log.info("reviewer recategorised %r as %s", proposal.title, review.category,
                      extra={"event": "scout_recategorised", "data": {"from": proposal.category, "to": review.category}})
             proposal = proposal.model_copy(update={"category": review.category})
             if proposal.category == "docs" and not docs_only(proposal):
-                return self.record(row_id, proposal, "dropped", verdict=review.verdict,
+                return self.record(row_id, proposal, "dropped", key=key, verdict=review.verdict,
                                    reason="reviewer called it docs, but the fix changes more than documentation")
         evidence = proposal.evidence
         if review.verdict == "confirmed":
             problem = evidence_problem(run.worktree, review.evidence, self.tracked, repo)
             if problem:
-                return self.record(row_id, proposal, "dropped", verdict=review.verdict, reason=f"reviewer {problem}")
+                return self.record(row_id, proposal, "dropped", key=key, verdict=review.verdict,
+                                   reason=f"reviewer {problem}")
             evidence = review.evidence
         repro = None
         if review.verdict == "confirmed" and proposal.category in REPRO_CATEGORIES and self.settings.repro and not docs_only(proposal):
             repro = scout_repro.reproduce(run, proposal, self.base_sha, self.base_green(), next(self.repros))
             run.recorder.event("scout", "repro", {"title": proposal.title, "ok": repro.ok, "reason": repro.reason})
             if repro.refuted:
-                return self.record(row_id, proposal, "dropped", verdict=review.verdict, repro_ok=0, reason=repro.reason)
+                return self.record(row_id, proposal, "dropped", key=key, verdict=review.verdict, repro_ok=0,
+                                   reason=repro.reason)
         if review.verdict == "product_decision":  # never work Cardinal may take on by itself
             mode, why = "needs_human", ""
         else:
             mode, why = gate.decide(self.settings, self.track_record, proposal.category, repro and repro.ok)
         label = {"proposed": repo.labels.proposed, "auto": repo.labels.ready, "needs_human": repo.labels.needs_human}[mode]
         test_diff = repro.diff if repro and repro.ok else None
-        text = render.body(proposal, evidence, review.reason, mode, why, repo.labels, fingerprint(proposal), test_diff)
+        text = render.body(proposal, evidence, review.reason, mode, why, repo.labels, key, test_diff)
         number = issues.create(repo.slug, proposal.title, text, labels=(label, repo.labels.type_label(proposal.category)))
         self.filed += 1
         self.issues.append({"number": number, "title": proposal.title, "state": "OPEN"})
         run.write_context("issues.json", self.issues)  # later reviewers and surveys in this pass read it
         log.info("filed #%s as %s", number, mode, extra={"event": "scout_filed", "data": {"issue": number, "mode": mode}})
         notes = "; ".join(item for item in (why, repro and repro.reason) if item)
-        self.record(row_id, proposal, "filed", verdict=review.verdict, filed_mode=mode, issue=number, reason=notes or None,
+        self.record(row_id, proposal, "filed", key=key, verdict=review.verdict, filed_mode=mode, issue=number, reason=notes or None,
                     repro_ok=None if repro is None else int(repro.ok))
 
 
