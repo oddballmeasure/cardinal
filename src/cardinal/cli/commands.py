@@ -81,7 +81,9 @@ def route(args, home: Home, config, db, sink):
         if args.once:
             result = scout.once(home, config, db, repo)
             return print_and(result, 1 if result.get("failure") else 0)
-        at = config.scout.at if config.scout else None
+        if config.scout is None:  # check before serve mode sleeps, as --once and status do
+            raise ValueError("No [scout] section in cardinal.toml")
+        at = config.scout.at
         if at is not None and args.interval is not None:
             raise ValueError(f"[scout] at = {at!r} schedules a daily pass; --interval cannot be combined with at")
         interval = scout.DEFAULT_INTERVAL if args.interval is None else args.interval

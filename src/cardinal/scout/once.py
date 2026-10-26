@@ -229,6 +229,8 @@ def next_at(at: str, after: datetime | None = None) -> datetime:
 def serve(home: Home, config: Config, db: sqlite3.Connection, repo: Repo, interval: int = DEFAULT_INTERVAL,
           at: str | None = None) -> None:
     """Run passes forever: daily at host-local `at` when set, else every `interval` seconds. No failure ends it."""
+    if config.scout is None:  # a missing section is a configuration error, not a pass failure
+        raise ValueError("No [scout] section in cardinal.toml")
     while True:
         if at is not None:
             when = next_at(at)
