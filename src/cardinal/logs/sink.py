@@ -36,7 +36,8 @@ class Sink:
 
     def _append(self, record: LogRecord, line: str) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
-        with open(self.directory / f"{record.at:%Y-%m-%d}.jsonl", "a", encoding="utf-8") as handle:
+        # named by the UTC day, the same day the `logs.at` column shows, whatever offset the sender used
+        with open(self.directory / f"{utc(record.at):%Y-%m-%d}.jsonl", "a", encoding="utf-8") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)  # the daemon, ingest and monitor may share a day's file
             handle.write(line + "\n")
 
