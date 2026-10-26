@@ -98,6 +98,18 @@ class PRService:
                       "--json", "number,url,headRefOid,headRefName,baseRefName")
         return next((pr for pr in prs if pr.get("baseRefName") == self.base), None)
 
+    def _merged_despite(self, number: int, error: GhError) -> dict:
+        """The PR's state after `gh pr merge` failed with error, when GitHub shows it merged at the
+        verified head with a merge commit. Otherwise the original error is raised again."""
+        try:
+            pr = gh_json("pr", "view", str(number), "-R", self.repo, "--json", "state,mergeCommit,headRefOid")
+        except GhError:
+            raise error from None
+        if (not isinstance(pr, dict) or pr.get("state") != "MERGED" or pr.get("headRefOid") != self.head_sha
+                or not (pr.get("mergeCommit") or {}).get("oid")):
+            raise error
+        return pr
+
     def tools(self) -> list:
         @tool("list_open_prs")
         def list_open_prs() -> str:
@@ -191,10 +203,16 @@ class PRService:
                         self.ci_observations.append("timeout")
                         return json.dumps({"merged": False, "status": "timeout"})
                     time.sleep(self.poll_seconds)
-                gh("pr", "merge", str(number), "-R", self.repo, "--merge",
-                   "--match-head-commit", self.head_sha, timeout=180)
-                # The PR's own merge commit: the base head may already be a sibling's later merge.
-                merged = gh_json("pr", "view", str(number), "-R", self.repo, "--json", "state,mergeCommit")
+                try:
+                    gh("pr", "merge", str(number), "-R", self.repo, "--merge",
+                       "--match-head-commit", self.head_sha, timeout=180)
+                except GhError as error:
+                    # `pr merge` is never retried, yet a transient error (e.g. HTTP 502) may arrive after
+                    # GitHub applied the merge. Read the PR once; accept only a merge at the verified head.
+                    merged = self._merged_despite(number, error)
+                else:
+                    # The PR's own merge commit: the base head may already be a sibling's later merge.
+                    merged = gh_json("pr", "view", str(number), "-R", self.repo, "--json", "state,mergeCommit")
             if merged["state"] != "MERGED" or not (merged.get("mergeCommit") or {}).get("oid"):
                 raise GhError(f"PR {number} reports {merged['state']} without a merge commit after merging")
             self.merge_sha = merged["mergeCommit"]["oid"]
