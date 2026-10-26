@@ -1,5 +1,6 @@
 """Where records go: a daily JSONL file (the portable archive) and the store's `logs` table (what the
 monitor queries). A failed write is reported on stderr and dropped; logging must never stop work.
+`write_stored` also never raises but tells its caller (ingest) whether the store received the record.
 It prints rather than logs, because a log call here would re-enter this sink."""
 
 import fcntl
@@ -27,12 +28,22 @@ class Sink:
         self.reported: set[str] = set()
 
     def write(self, record: LogRecord) -> LogRecord:
+        """Cardinal's own logging: never raises, whatever happened to either write."""
+        return self._write(record)[0]
+
+    def write_stored(self, record: LogRecord) -> bool:
+        """Like `write`, and never raises, but answers whether the store's `logs` table received the
+        record (an id already there counts as received). Ingest uses it so a record the store dropped
+        is not reported delivered."""
+        return self._write(record)[1]
+
+    def _write(self, record: LogRecord) -> tuple[LogRecord, bool]:
         record = stamped(record)
         line = record.model_dump_json()
         with self.lock:
             self._attempt("jsonl", lambda: self._append(record, line))
-            self._attempt("store", lambda: self._insert(record, line))
-        return record
+            stored = self._attempt("store", lambda: self._insert(record, line))
+        return record, stored
 
     def _append(self, record: LogRecord, line: str) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -49,7 +60,8 @@ class Sink:
              record.event, record.failure_kind, record.fingerprint, record.context.run_id, line),
         )
 
-    def _attempt(self, target: str, action) -> None:
+    def _attempt(self, target: str, action) -> bool:
+        """True when `action` completed; a failure is reported on stderr and answers False."""
         try:
             action()
         except Exception as exc:  # noqa: BLE001 - see module docstring
@@ -57,3 +69,5 @@ class Sink:
             if key not in self.reported:  # once per cause, or a full disk floods stderr
                 self.reported.add(key)
                 print(f"cardinal: log {target} write failed and records are being dropped: {exc!r}", file=sys.stderr)
+            return False
+        return True
