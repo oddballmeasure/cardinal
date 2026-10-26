@@ -17,8 +17,17 @@ log = logging.getLogger(__name__)
 MAX_BODY = 5_000_000
 
 
+class Malformed:
+    """An NDJSON line that is not valid JSON: rejected alone, at its own index, like a bad record."""
+
+    def __init__(self, error: json.JSONDecodeError) -> None:
+        self.error = f"line is not valid JSON: {error}"
+
+
 def parse(body: bytes) -> list:
-    """A JSON array, one JSON object (on one line or several), or NDJSON (one object per line)."""
+    """A JSON array, one JSON object (on one line or several), or NDJSON (one object per line).
+    An NDJSON line that is not JSON becomes a `Malformed` item; if no line is JSON at all, the body
+    is not NDJSON and the first line's JSONDecodeError is raised."""
     text = body.decode("utf-8").strip()
     if text.startswith("["):
         return json.loads(text)
@@ -28,12 +37,26 @@ def parse(body: bytes) -> list:
         whole = None  # e.g. NDJSON's "Extra data": parse it line by line below
     if isinstance(whole, dict):
         return [whole]
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
+    items, first_error = [], None
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            items.append(json.loads(line))
+        except json.JSONDecodeError as exc:
+            first_error = first_error or exc
+            items.append(Malformed(exc))
+    if items and all(isinstance(item, Malformed) for item in items):
+        raise first_error
+    return items
 
 
 def accept(items: list, repos: set[str], sink: Sink) -> dict:
     accepted, rejected = 0, []
     for index, item in enumerate(items):
+        if isinstance(item, Malformed):
+            rejected.append({"index": index, "error": item.error})
+            continue
         try:
             record = LogRecord.model_validate(item)
         except ValidationError as exc:
