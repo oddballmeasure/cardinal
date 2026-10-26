@@ -125,7 +125,10 @@ def serve(config: Config, sink: Sink) -> None:
     if not token:
         raise ValueError(f"{config.ingest.token_env} is not set; the ingest endpoint will not run without a token")
     host, _, port = config.ingest.bind.rpartition(":")
-    server = ThreadingHTTPServer((host, int(port)), handler_for(token, {repo.slug for repo in config.repos}, sink))
+    try:
+        server = ThreadingHTTPServer((host, int(port)), handler_for(token, {repo.slug for repo in config.repos}, sink))
+    except OSError as exc:  # e.g. address already in use, or a host that does not resolve (gaierror)
+        raise ValueError(f"cannot listen on {config.ingest.bind}: {exc}") from exc
     print(json.dumps({"listening": f"http://{host}:{server.server_port}/v1/records"}), flush=True)
     log.info("ingest listening on %s:%s", host, server.server_port, extra={"event": "ingest_started"})
     try:
