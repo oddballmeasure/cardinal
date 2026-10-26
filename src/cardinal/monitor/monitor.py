@@ -1,7 +1,8 @@
 """`cardinal monitor`: turn repeated errors into triaged issues on the repository that produced them.
 
 Rules decide what is filed; a model only writes the words. The cursor never moves past a group
-that was due but not filed (capped, failed, or unroutable), so it is reconsidered next pass.
+that was due but not filed (capped, failed, or unroutable), so it is reconsidered next pass. Once an
+issue has been created, a triage failure leaves it "filed" (with label None and a triage_error).
 """
 
 import json
@@ -67,7 +68,14 @@ def file(home: Home, config: Config, db: sqlite3.Connection, group: Group) -> di
     findings.record(db, group.fingerprint, repo.slug, number, group.count, group.first_seen, group.last_seen)
     log.info("filed #%s on %s for %s", number, repo.slug, group.fingerprint,
              extra={"event": "finding_filed", "data": {"issue": number, "repo": repo.slug}})
-    triaged = app.triage(home, config, repo, db, number)
+    try:
+        triaged = app.triage(home, config, repo, db, number)
+    except Exception as exc:  # noqa: BLE001 - the issue exists; a triage failure must not undo "filed"
+        log.error("could not triage #%s on %s for %s", number, repo.slug, group.fingerprint, exc_info=exc,
+                  extra={"event": "finding_triage_failed",
+                         "data": {"issue": number, "repo": repo.slug, "fingerprint": group.fingerprint}})
+        return {"fingerprint": group.fingerprint, "issue": number, "repo": repo.slug, "action": "filed",
+                "label": None, "recurs_after": previous, "triage_error": str(exc)[:500]}
     return {"fingerprint": group.fingerprint, "issue": number, "repo": repo.slug, "action": "filed",
             "label": triaged["label"], "recurs_after": previous}
 
