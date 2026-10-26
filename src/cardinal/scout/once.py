@@ -255,7 +255,9 @@ def status(config: Config, db: sqlite3.Connection, repo: Repo) -> dict:
     record = outcomes.track_record(db, repo.slug)
     categories = {}
     for category in config.scout.categories:
-        mode, why = gate.decide(config.scout, record, category, repro_ok=True)  # repro is judged per proposal
+        # A repro is judged per proposal, so assume one could succeed only when repro is enabled;
+        # with repro off a pass can never file a bug or regression ready.
+        mode, why = gate.decide(config.scout, record, category, repro_ok=config.scout.repro)
         categories[category] = {**record.get(category, {}), "gate": mode, "why": why}
     return {"repo": repo.slug, "autonomy": config.scout.autonomy, "window_days": WINDOW_DAYS,
             "categories": categories, "open": undecided,
