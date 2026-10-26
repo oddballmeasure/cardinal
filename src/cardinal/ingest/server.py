@@ -65,7 +65,9 @@ def accept(items: list, repos: set[str], sink: Sink) -> dict:
         if record.source.repo not in repos:
             rejected.append({"index": index, "error": f"{record.source.repo} is not a configured repository"})
             continue
-        sink.write(record)
+        if not sink.write_stored(record):  # the sender must resend what the store did not receive
+            rejected.append({"index": index, "error": "record could not be stored; resend it"})
+            continue
         accepted += 1
     return {"accepted": accepted, "rejected": rejected}
 

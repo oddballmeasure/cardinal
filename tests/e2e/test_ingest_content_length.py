@@ -4,7 +4,6 @@ several."""
 
 import json
 import socket
-import sqlite3
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -15,6 +14,7 @@ import pytest
 
 from cardinal.ingest.server import MAX_BODY, handler_for
 from cardinal.logs.sink import Sink
+from cardinal.store.db import connect
 
 TOKEN = "ingest-token"
 EXAMPLE_RECORD = Path(__file__).resolve().parents[2] / "examples" / "log-record.json"
@@ -23,7 +23,7 @@ REPOS = {"example/app", "oddballmeasure/cardinal_test_repo"}
 
 @pytest.fixture
 def server(tmp_path):
-    sink = Sink(tmp_path / "logs", sqlite3.connect(":memory:", check_same_thread=False))
+    sink = Sink(tmp_path / "logs", connect(tmp_path / "store.db"))  # a real store: ingest reports what it stored
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(TOKEN, REPOS, sink))
     httpd.daemon_threads = True
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
