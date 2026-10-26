@@ -56,6 +56,8 @@ def route(args, home: Home, config, db, sink):
     if args.command == "monitor":
         if args.once:
             return monitor.once(home, config, db)
+        if config.monitor is None:  # check before the serve loop would log and retry it, as --once does
+            raise ValueError("No [monitor] section in cardinal.toml")
         monitor.serve(home, config, db, args.interval)
     if args.command == "daemon":
         repos = [config.repo(args.repo)] if args.repo else config.repos
