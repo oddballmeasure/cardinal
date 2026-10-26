@@ -30,12 +30,24 @@ class GitError(RuntimeError):
 
 PUSH_ATTEMPTS = 3
 PUSH_BACKOFF_SECONDS = 0.25
+# A status code counts only in an HTTP status context ("HTTP 502", "HTTP/1.1 503", "error: 403",
+# "returned error: 503"), as in gh.py: the pushed ref carries the slugged issue title and number,
+# so a bare number may be part of the branch name.
+_STATUS = r"(?:\bhttp(?:/\d(?:\.\d)?)?\s*|\berror:\s*)"
 PUSH_PERMANENT = re.compile(r"non-fast-forward|fetch first|stale info|protected branch|protected\b|"
-                            r"permission denied|access denied|403\b|forbidden|not permitted|"
+                            r"permission denied|access denied|" + _STATUS + r"403\b|forbidden|not permitted|"
                             r"pre-receive hook declined", re.IGNORECASE)
 PUSH_TRANSIENT = re.compile(r"remote rejected\].*\(failure\)|fatal error in commit_refs|"
-                            r"\b(?:http\s*)?5\d\d\b|connection reset|connection was reset|"
+                            + _STATUS + r"5\d\d\b|connection reset|connection was reset|"
                             r"remote end hung up unexpectedly", re.IGNORECASE)
+
+
+def _push_failure_text(exc: BaseException, branch: str) -> str:
+    """The error text to classify, with the branch and its refs removed so their numbers never count."""
+    text = str(exc)
+    for ref in (f"HEAD:refs/heads/{branch}", f"refs/heads/{branch}", branch):
+        text = text.replace(ref, "<branch>")
+    return text
 
 
 def run_git(repo: Path, *args: str, timeout: int = 120, codes: tuple[int, ...] = (0,)) -> subprocess.CompletedProcess:
@@ -174,8 +186,9 @@ def _publish(worktree: Path, branch: str) -> str:
                     break
                 if observed != previous:
                     raise GitError(f"Remote {branch} moved from {previous} to {observed} during push") from exc
+                text = _push_failure_text(exc, branch)
                 transient = isinstance(exc, subprocess.TimeoutExpired) or (
-                    not PUSH_PERMANENT.search(str(exc)) and bool(PUSH_TRANSIENT.search(str(exc))))
+                    not PUSH_PERMANENT.search(text) and bool(PUSH_TRANSIENT.search(text)))
                 if not transient or attempt == PUSH_ATTEMPTS:
                     raise GitError(f"Push of {branch} failed after {attempt} attempt(s): {exc}") from exc
                 time.sleep(PUSH_BACKOFF_SECONDS * 2 ** (attempt - 1))
